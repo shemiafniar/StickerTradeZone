@@ -1,19 +1,18 @@
-# Sticker Trade IL 🔁⚽
+# Shashot (שאשות) ⚽📖
 
 **אזור החלפת מדבקות לאספני כדורגל בישראל** - a fast, mobile-first, RTL Hebrew web app that helps
-football sticker collectors in Israel track duplicates/missing stickers and find nearby people to
-trade or sell with.
+football sticker collectors track their collection visually (like a real sticker album) and find
+nearby people to trade or sell with.
 
 > **Not affiliated with Panini, FIFA, or any official sticker brand.** This is an independent,
 > community-built collector trade zone. See the footer disclaimer shown on every page.
 
-This README covers the public **Beta** release. The original MVP is preserved in git history / PR
-#1, the initial Beta feature set in PR #2, a QA/security/production-hardening pass in PR #3, PR #4
-closed the remaining gaps in the **production bootstrap** (zero manual SQL/DB edits after deploying
-- see [Zero-touch production bootstrap](#zero-touch-production-bootstrap) below), and this revision
-(PR #5) fixes a real registration error-rendering bug and adds **Google sign-in** - see
-[Auth error handling](#auth-error-handling-never-show-raw-errors) and
-[Google sign-in](#google-sign-in) below.
+This README covers the current release. The product was originally named "Sticker Trade IL" and
+managed collections via typed sticker-number lists; it has since been renamed **Shashot** and its
+collection UX rebuilt from the ground up around a visual, tap-to-mark album grid - see
+[Visual collection model](#visual-collection-model-teams--sticker-codes) below for the full
+redesign, and git history / earlier PRs for the prior MVP, Beta, QA/hardening, and production
+bootstrap passes.
 
 ## Tech stack
 
@@ -26,19 +25,34 @@ closed the remaining gaps in the **production bootstrap** (zero manual SQL/DB ed
 
 ## Features
 
-### Core (MVP)
+### Collection management (visual album)
 
-- Email/password auth (Supabase Auth) with an auto-created public profile
+- **Visual, tap-to-mark album grid** - "My Collection" shows every participating national team as a
+  card (flag, Hebrew name, 3-letter code); tapping one opens a 20-sticker grid. Tapping a sticker
+  instantly cycles gray (unmarked) → green (have) → blue (duplicate/tradeable) → red (missing) →
+  gray, with no modal dialogs, plus "Mark all as owned" / "Clear all" quick actions and an explicit
+  "Save" to persist a batch of changes at once.
+- Every sticker has a unique, human-readable identifier: `TEAMCODE-number` (e.g. `GER-2`, `FRA-17`,
+  `POR-5`) - see [Visual collection model](#visual-collection-model-teams--sticker-codes) below.
+- **AI Sticker Scanner** - photograph the **backs** of several stickers at once (each back prints a
+  team code + number in a corner, e.g. "GER 2") and the scanner detects and marks them all as owned
+  after a quick review/confirmation screen. Ships with a fully working mock provider (no external
+  dependency) and an optional OpenAI Vision provider you can enable with one env var. The scanner is
+  always an optional shortcut - the grid is the primary workflow.
+- A separate "הכפולים שלי" (my duplicates) page lets you set marketplace details (trade/sale/both,
+  price, note) for any sticker marked blue, without interrupting the tap-to-mark grid flow.
+
+### Core
+
+- Email/password auth (Supabase Auth) with an auto-created public profile, plus Google sign-in
 - Profile: full name, city, optional neighborhood, phone/WhatsApp (only revealed after a trade is
   accepted - enforced at the database level via RLS, not just in the UI)
-- Sticker collection management with a fast bulk-input mode supporting comma lists and ranges
-  (`1-20, 34, 56-60`)
 - Trade requests: pending → accepted/declined → completed/cancelled; contact details (incl. a
   WhatsApp deep link) are revealed only once a trade is accepted
-- Admin dashboard: platform stats, searchable/filterable user table with suspend/reactivate,
-  sticker catalog management, and an `admin_logs` audit trail
+- Admin dashboard: platform stats, searchable/filterable user table with suspend/reactivate, a form
+  to add new participating teams (auto-generating their 20 stickers), and an `admin_logs` audit trail
 
-### New in Beta
+### Location, chat, notifications, marketplace, sharing
 
 - **Location-based matching** - opt-in approximate location (browser geolocation, rounded to
   ~100m before it ever leaves the device) powers real distance sorting ("500 מ׳" / "2.3 ק״מ"),
@@ -48,14 +62,11 @@ closed the remaining gaps in the **production bootstrap** (zero manual SQL/DB ed
   visible only to its two participants, with unread badges and auto-scroll.
 - **Notifications** - a bell with a live unread badge, dropdown, and full history page. Notifications
   fire for new trade requests, accepted/declined trades, and new chat messages.
-- **Richer marketplace** - each duplicate can be listed as *trade only*, *sale only*, or *trade or
-  sale*, with an optional price and note. Still no payment processing - the app only connects
-  collectors.
+- **Richer marketplace** - each duplicate (blue) sticker can be listed as *trade only*, *sale only*,
+  or *trade or sale*, with an optional price and note. Still no payment processing - the app only
+  connects collectors.
 - **Viral sharing** - native share sheet (where supported), a WhatsApp share link, and a "copy
   link" button, using the product's suggested Hebrew invite text.
-- **AI Sticker Scanner** - photograph a pile of loose duplicates or an open album page and let
-  Vision/OCR pre-fill your lists. Ships with a fully working mock provider (no external
-  dependency) and an optional OpenAI Vision provider you can enable with one env var.
 
 ## Project structure
 
@@ -64,23 +75,28 @@ src/
   app/                     Next.js App Router pages (landing, auth, dashboard, admin)
     auth/callback/route.ts  PKCE code-exchange endpoint (email confirmation, OAuth, magic links)
     auth/confirm/route.ts   token_hash fallback endpoint (older-style email templates)
+    dashboard/stickers/page.tsx             Team cards list ("My Collection")
+    dashboard/stickers/[teamCode]/page.tsx  20-sticker tap-to-mark grid for one team
+    dashboard/stickers/marketplace/page.tsx Marketplace details editor for duplicate (blue) stickers
   components/
     ui/                    Shared primitives (Button, Card, Field, Skeleton, ...)
-    auth/ stickers/ matches/ trades/ admin/ profile/  Feature UI
+    collection/            TeamCard, StickerGrid (tap-to-cycle grid), ColorLegend, DuplicateListingChip
+    auth/ matches/ trades/ admin/ profile/  Feature UI
     location/              Location opt-in/opt-out toggle
     notifications/         Notification bell + history list
-    scanner/                AI Scanner upload/review UI
+    scanner/                AI Scanner upload/review UI (sticker-back detection)
     share/                  Share button + share card
   lib/
     actions/               Server Actions (auth, profile, stickers, trades, chat,
                             notifications, location, scanner, admin)
-    data/                  Server-side data fetchers (Supabase queries)
+    data/                  Server-side data fetchers (Supabase queries) - teams.ts, collection.ts
+                            (team progress + grid + marketplace listings), matches.ts, stickers.ts
     supabase/              Supabase client/server/proxy (session) helpers
     vision/                Vision/OCR provider abstraction (mock + OpenAI) for the AI Scanner
-    matching.ts            Pure, side-effect-free match-ranking algorithm
+    matching.ts            Pure, side-effect-free match-ranking algorithm (operates on sticker codes)
     cities.ts              Israeli city → region map (fallback for location-less users)
     distance.ts            Haversine display formatting + coordinate rounding
-    stickerInput.ts        Bulk sticker number parser ("1-20, 34, 56-60")
+    stickerCodes.ts        Sticker code parsing/formatting/validation ("GER-2", "GER 1-3 · FRA 17")
   types/database.ts        Hand-written Supabase Database types
   proxy.ts                 Next.js 16 "proxy" (formerly middleware) - session refresh + route guards
 supabase/
@@ -95,9 +111,57 @@ supabase/
   migrations/0009_auth_trigger_resilience.sql  Non-blocking profile provisioning + full SQL diagnostics
   migrations/0010_reconcile_profile_contacts.sql  Reconciles drifted profile_contacts schemas (fixes
                                         "column whatsapp_phone does not exist" on affected projects)
+  migrations/0011_shashot_teams.sql  Shashot redesign: teams table, team-scoped sticker codes,
+                                        unified user_stickers (4-state) table - see below
   diagnostics/check_auth_trigger.sql Read-only script to debug "Database error saving new user"
-  seed.sql                           Local-dev-only seed data (catalog + demo users + trades + chat)
+  seed.sql                           Local-dev-only seed data (demo users + collections + trades + chat)
 ```
+
+### Visual collection model (teams & sticker codes)
+
+The collection is no longer managed by typing sticker numbers into a text field - it's a visual
+album: **teams** (national teams, shown as cards with a flag/Hebrew name/3-letter code) each contain
+exactly 20 **stickers**, uniquely identified by `TEAMCODE-number` (e.g. `GER-2`, `FRA-17`, `POR-5`).
+
+- `teams` (`code` primary key, `name_he`, `flag_emoji`, `sort_order`) - seeded with 32 real national
+  teams (including ישראל first) by `0011_shashot_teams.sql`. Admins can add more via the
+  `admin_add_team()` RPC (see the admin catalog page), which also auto-generates that team's 20
+  `stickers` rows in the same transaction.
+- `stickers` keeps its original `id` (uuid) primary key (so existing `trade_request_items` foreign
+  keys never dangle across the migration) but gained `team_code` (FK to `teams`), a per-team
+  `number` (1-20, no longer globally unique), and a `code` column that's always
+  `${team_code}-${number}` and unique across the whole catalog - the identifier used everywhere in
+  the UI, matching logic, and trade items.
+- `user_stickers` **replaces both** the old `user_duplicates` and `user_missing` tables with a
+  single 4-state row per `(user, sticker)`: **no row** = unmarked (gray), `status = 'have'` (green),
+  `'duplicate'` (blue, tradeable - carries `listing_type`/`price`/`note`), or `'missing'` (red).
+  Tapping a sticker in the grid simply cycles through these four states client-side; "Save" persists
+  the whole team's diff in one batched Server Action call (`saveTeamGridAction`).
+- **Matching is unaffected in principle, only in representation**: `computeMatches()` in
+  `src/lib/matching.ts` still does the same set-intersection of "what I need" vs. "what they have
+  spare" - it just operates on `code: string` (e.g. `"GER-2"`) instead of a bare `number`, which is
+  actually *more* correct, since two different teams' sticker #2 are now unambiguously distinct.
+
+**Migrating existing data**: `0011_shashot_teams.sql` is written to preserve existing collections
+wherever mathematically possible, and to fully self-heal otherwise - no manual SQL, on fresh or
+existing projects:
+
+1. It best-effort remaps the old flat 1..N sticker numbering onto `(team, per-team number)` pairs,
+   treating every consecutive block of 20 old numbers as one seeded team (in team `sort_order`) -
+   this exactly preserves existing `user_duplicates`/`user_missing`/`trade_request_items` data
+   whenever a project's catalog was configured as `team_count * 20` (the expected shape for a
+   project that only ever used this app's admin catalog tools).
+2. Any legacy sticker numbers beyond that range (no valid team mapping exists) are removed along
+   with rows that reference them - this only affects a catalog that was never fully configured;
+   nothing in the shipped admin UI could create such a gap.
+3. Regardless of what existed before, the migration guarantees every one of the 32 seeded teams ends
+   up with exactly 20 stickers (missing ones are freshly created), so the catalog is always complete
+   on both a brand-new database and a previously-used one.
+4. This was verified end-to-end locally: seeded a database with the *old* schema/shape (60 flat
+   stickers, two collectors with overlapping duplicates/missing/trade-request data, matching
+   marketplace price/note fields), ran the migration, and confirmed every row landed on the
+   expected new `code`, with `trade_request_items` foreign keys intact and marketplace fields
+   preserved - byte-for-byte matching a hand-computed expected mapping.
 
 ### Why a `profiles` / `profile_contacts` split?
 
@@ -360,11 +424,14 @@ change to how distance is computed (e.g. a fancier geo index) only touches `near
 
 ### Swapping the AI Scanner's Vision provider
 
-`src/lib/vision/types.ts` defines a single `VisionProvider` interface (`scanDuplicates`,
-`scanAlbumPage`). `getVisionProvider()` in `src/lib/vision/index.ts` returns `OpenAiVisionProvider`
-when `OPENAI_API_KEY` is set, otherwise `MockVisionProvider`. To add another backend (Google Cloud
-Vision, a custom model, etc.), implement the interface and add a branch in `getVisionProvider()` -
-nothing in `src/lib/actions/scanner.ts` or the UI needs to change.
+`src/lib/vision/types.ts` defines a single `VisionProvider` interface with one method,
+`scanStickerBacks(imageBase64, mimeType)`, returning the team code + in-team number + confidence for
+every sticker back detected in the photo. `getVisionProvider()` in `src/lib/vision/index.ts` returns
+`OpenAiVisionProvider` when `OPENAI_API_KEY` is set, otherwise `MockVisionProvider`. To add another
+backend (Google Cloud Vision, a custom model, etc.), implement the interface and add a branch in
+`getVisionProvider()` - nothing in `src/lib/actions/scanner.ts` or the UI needs to change. Detected
+stickers are marked `status = 'have'` (green) in `user_stickers`, unless already marked `'duplicate'`
+(blue) - a scan never silently removes a sticker from someone's marketplace listings.
 
 ## Getting started
 
@@ -387,17 +454,20 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 8. `supabase/migrations/0008_bootstrap.sql`
 9. `supabase/migrations/0009_auth_trigger_resilience.sql`
 10. `supabase/migrations/0010_reconcile_profile_contacts.sql`
+11. `supabase/migrations/0011_shashot_teams.sql`
 
-All 10 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 11 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
-inserts/updates are required, including for your first admin account (see step 4). If sign-in ever
+inserts/updates are required, including for your first admin account (see step 4) or the sticker
+catalog (32 national teams × 20 stickers each are seeded automatically by `0011`). If sign-in ever
 fails with "Database error saving new user", see
 [Diagnosing "Database error saving new user"](#diagnosing-database-error-saving-new-user) above -
 `supabase/diagnostics/check_auth_trigger.sql` is a read-only script for exactly that. If your
-project was created before `0010` existed and already hit the `whatsapp_phone` error described
-there, just running `0010` (safe to run any time, on any project) resolves it - no manual SQL, no
-data loss.
+project was created before `0010`/`0011` existed, just running whichever ones you're missing (safe
+to run any time, on any project, and designed to preserve existing collections - see
+[Visual collection model](#visual-collection-model-teams--sticker-codes) above) resolves it - no
+manual SQL, no data loss.
 
 > If you already ran an earlier subset of these migrations for a previous release, you only need to
 > additionally run whichever ones you're missing - each is a pure addition/alteration and safe to
@@ -432,24 +502,25 @@ anything in this app's code.
 `supabase db reset`, which runs `supabase/seed.sql` automatically). **Never run it against a
 hosted/production Supabase project.**
 
-It creates 10 demo accounts (password `Password123!` for all of them), a 60-sticker demo catalog,
-sample duplicates/missing (including a couple of priced marketplace listings) so matches show up
-immediately, approximate demo locations for 5 of the accounts, a couple of sample trade requests
-(one pending, one already accepted with sample chat history), and the notifications those events
-generate:
+The team/sticker catalog itself (32 teams × 20 stickers) is already fully seeded by the migrations
+above - this script only adds 10 demo accounts (password `Password123!` for all of them), sample
+collections spread across several real teams (including a couple of priced marketplace listings) so
+matches show up immediately, approximate demo locations for 5 of the accounts, a couple of sample
+trade requests (one pending, one already accepted with sample chat history), and the notifications
+those events generate:
 
 | Email | Role | City | Location set? |
 | --- | --- | --- | --- |
-| admin@stickertrade.local | admin | תל אביב יפו | – |
-| dana@stickertrade.local | user | תל אביב יפו | ✅ |
-| yossi@stickertrade.local | user | תל אביב יפו | ✅ |
-| noa@stickertrade.local | user | רמת גן | ✅ |
-| amit@stickertrade.local | user | חיפה | ✅ |
-| tamar@stickertrade.local | user | חיפה | ✅ |
-| eli@stickertrade.local | user | ירושלים | – |
-| maya@stickertrade.local | user | באר שבע | – |
-| roi@stickertrade.local | user | אשדוד | – |
-| gali@stickertrade.local | user | פתח תקווה | – |
+| admin@shashot.local | admin | תל אביב יפו | – |
+| dana@shashot.local | user | תל אביב יפו | ✅ |
+| yossi@shashot.local | user | תל אביב יפו | ✅ |
+| noa@shashot.local | user | רמת גן | ✅ |
+| amit@shashot.local | user | חיפה | ✅ |
+| tamar@shashot.local | user | חיפה | ✅ |
+| eli@shashot.local | user | ירושלים | – |
+| maya@shashot.local | user | באר שבע | – |
+| roi@shashot.local | user | אשדוד | – |
+| gali@shashot.local | user | פתח תקווה | – |
 
 On a **hosted** Supabase project, don't run this file. Instead, just sign up normally through the app
 UI - **the very first account created on a fresh project is automatically made an admin** (see
@@ -494,16 +565,16 @@ npm run dev
 Open [http://localhost:3000](http://localhost:3000). Register the first account - it will
 automatically be an admin.
 
-### 8. Set an initial sticker catalog (as an admin)
+### 8. (Optional) Add more teams to the catalog (as an admin)
 
-Log in as an admin and go to **אזור ניהול → קטלוג מדבקות** to set the total number of stickers in
-the set (this auto-generates numbered catalog rows `1..N`) and/or paste in a custom list
-(`number,name,team` per line - name/team are optional, matching the MVP requirement to support
-generic numbered stickers without full player/team data).
+The catalog already ships with 32 real national teams (20 stickers each) seeded by the migrations -
+there's nothing required here. If you want to add more teams, log in as an admin and go to
+**אזור ניהול → קטלוג מדבקות**: enter a 3-letter code, Hebrew name, and optional flag emoji, and the
+system automatically generates that team's 20 stickers (`CODE-1` through `CODE-20`).
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 10 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 11 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`). Do **not** run `seed.sql` against it (it has a built-in guard that
    refuses to run if it detects any non-demo account already exists, but the safest rule is simply:
    don't run it against a hosted project at all).
@@ -518,15 +589,16 @@ generic numbered stickers without full player/team data).
    - `OPENAI_API_KEY` (optional, enables real AI Scanner detection)
 4. Deploy. No build-time secrets or server infra beyond Supabase + Vercel are required - there's no
    custom server, cron job, or queue in this Beta.
-5. Sign up through the live app. **You're automatically an admin** - nothing else to configure. Go to
-   **אזור ניהול → קטלוג מדבקות** to set your sticker catalog size.
+5. Sign up through the live app. **You're automatically an admin** - nothing else to configure. The
+   sticker catalog (32 teams × 20 stickers) is already seeded; add more teams any time from
+   **אזור ניהול → קטלוג מדבקות** if you like.
 
 That's the entire deployment - no SQL editor visits after step 1, no manual profile/role edits, ever.
 
 ### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 10 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+- ✅ All 11 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
   times, including a full clean-room run for this pass) with zero errors.
 - ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
   Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
@@ -564,7 +636,7 @@ npm run dev     # start the dev server
 npm run build   # production build (also runs the TypeScript check)
 npm run start   # run the production build
 npm run lint    # ESLint
-npm test        # Vitest unit tests (matching, sticker input parsing, distance, vision provider)
+npm test        # Vitest unit tests (matching, sticker code parsing, distance, vision provider)
 ```
 
 ## Security notes
@@ -612,7 +684,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] On a brand new Supabase project (only the 10 migrations run, no seed, no manual SQL), register
+- [ ] On a brand new Supabase project (only the 11 migrations run, no seed, no manual SQL), register
       the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
@@ -633,10 +705,15 @@ third-party share sheets) can't be fully exercised in CI:
       host, or just watch for it under real network flakiness) and confirm the form shows a readable
       Hebrew message - never `"{}"`, raw JSON, or `[object Object]` - and that the real error appears
       in your server/Vercel logs
-- [ ] Add duplicates manually via the bulk input (single numbers, a range, and a mix)
-- [ ] Add missing stickers manually the same way
-- [ ] Run the AI Scanner in both modes (duplicate photo, album page photo) using the mock provider;
-      correct a detected number, remove a row, add one manually, then save
+- [ ] Open "האוסף שלי", tap a team card, and tap through several stickers to confirm the
+      gray → green → blue → red → gray cycle is instant with no modal dialogs; try
+      "Mark all as owned" and "Clear all", then confirm "Save" persists after a page refresh
+      (and that navigating away with unsaved changes prompts a browser confirmation)
+- [ ] Mark a sticker blue (duplicate) in the grid, then find and edit its listing type/price/note on
+      the "הכפולים שלי" marketplace page
+- [ ] Run the AI Scanner using the mock provider: confirm it returns a handful of detected
+      `TEAMCODE-number` stickers, correct a detected code, remove a row, add one manually, then save
+      and confirm those stickers turn green in the collection grid
 - [ ] Enable location from the profile page (grant the browser permission prompt) and confirm the
       matches page switches to distance-based sorting; disable it again and confirm it falls back to
       city-based sorting
@@ -670,7 +747,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 10 migrations in order, confirm no errors, do **not** run
+- [ ] Fresh Supabase project: run all 11 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
 - [ ] Confirm the Auth URL Configuration (Site URL + Redirect URLs) is set for your deployed domain
@@ -728,10 +805,20 @@ third-party share sheets) can't be fully exercised in CI:
 - The in-process auth rate limiter (`src/lib/rateLimit.ts`) resets on cold start and isn't shared
   across serverless instances - a reasonable "basic" first line of defense per the hardening brief,
   but a distributed store (e.g. Upstash Redis) would be needed for a stricter guarantee at scale.
-- Unit tests cover the pure logic modules (`matching.ts`, `stickerInput.ts`, `distance.ts`,
+- Unit tests cover the pure logic modules (`matching.ts`, `stickerCodes.ts`, `distance.ts`,
   `cities.ts`, Vision provider selection); there's no integration/E2E test suite yet (e.g.
   Playwright against a real Supabase test project) - the manual QA checklist above fills that gap
   for now.
+- **The old-catalog-to-teams remap in `0011_shashot_teams.sql` is best-effort**, not guaranteed
+  lossless: it assumes the pre-existing flat catalog was configured as `team_count * 20` consecutive
+  numbers (the only shape the old admin tools could produce). A project with a differently-sized
+  legacy catalog will still end up with a complete, consistent 32-team/640-sticker catalog after the
+  migration, but some pre-existing collectors' duplicate/missing markings may land on a different
+  team than they might expect - see [Visual collection model](#visual-collection-model-teams--sticker-codes)
+  above for exactly how the mapping works.
+- The new team-grid "Save" batches all 20 cells' changes into one Server Action call per team; there
+  is currently no cross-team "save everything" action, nor conflict handling if the same account
+  edits the same team from two open tabs simultaneously (last save wins).
 
 ## MVP scope notes (still true for the Beta)
 
