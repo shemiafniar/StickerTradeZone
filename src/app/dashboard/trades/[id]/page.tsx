@@ -1,11 +1,11 @@
 import { notFound } from "next/navigation";
 import { getTradeRequestById } from "@/lib/data/trades";
-import { getRevealedContact, getCurrentUserId } from "@/lib/data/profile";
+import { getCurrentProfile, getRevealedContact } from "@/lib/data/profile";
 import { getTradeMessages } from "@/lib/data/chat";
 import { Card } from "@/components/ui/Card";
 import { TradeStatusBadge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
 import { TradeChat } from "@/components/trades/TradeChat";
+import { TradeActionForm } from "@/components/trades/TradeActionForm";
 import {
   acceptTradeAction,
   cancelTradeAction,
@@ -17,13 +17,14 @@ export const metadata = { title: "פרטי טרייד | Sticker Trade IL" };
 
 export default async function TradeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [trade, currentUserId, messages] = await Promise.all([
+  const [trade, myProfile, messages] = await Promise.all([
     getTradeRequestById(id),
-    getCurrentUserId(),
+    getCurrentProfile(),
     getTradeMessages(id),
   ]);
-  if (!trade || !currentUserId) notFound();
+  if (!trade || !myProfile) notFound();
 
+  const isSuspended = myProfile.status === "suspended";
   const contactRevealed = trade.status === "accepted" || trade.status === "completed";
   const contact = contactRevealed && trade.otherUser ? await getRevealedContact(trade.otherUser.id) : null;
 
@@ -69,35 +70,37 @@ export default async function TradeDetailPage({ params }: { params: Promise<{ id
           </div>
         </div>
 
-        {trade.status === "pending" && !trade.isSender && (
+        {isSuspended && (
+          <p className="mt-5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+            החשבון שלך מושהה, ולכן לא ניתן לעדכן בקשות טרייד כרגע.
+          </p>
+        )}
+
+        {!isSuspended && trade.status === "pending" && !trade.isSender && (
           <div className="mt-5 flex gap-3">
-            <form action={acceptTradeAction} className="flex-1">
-              <input type="hidden" name="tradeId" value={trade.id} />
-              <Button className="w-full">אישור בקשה</Button>
-            </form>
-            <form action={declineTradeAction} className="flex-1">
-              <input type="hidden" name="tradeId" value={trade.id} />
-              <Button variant="outline" className="w-full">
-                דחייה
-              </Button>
-            </form>
+            <TradeActionForm tradeId={trade.id} action={acceptTradeAction} label="אישור בקשה" className="flex-1" />
+            <TradeActionForm
+              tradeId={trade.id}
+              action={declineTradeAction}
+              label="דחייה"
+              variant="outline"
+              className="flex-1"
+            />
           </div>
         )}
 
-        {trade.status === "pending" && trade.isSender && (
-          <form action={cancelTradeAction} className="mt-5">
-            <input type="hidden" name="tradeId" value={trade.id} />
-            <Button variant="outline" className="w-full">
-              ביטול הבקשה
-            </Button>
-          </form>
+        {!isSuspended && trade.status === "pending" && trade.isSender && (
+          <TradeActionForm
+            tradeId={trade.id}
+            action={cancelTradeAction}
+            label="ביטול הבקשה"
+            variant="outline"
+            className="mt-5"
+          />
         )}
 
-        {trade.status === "accepted" && (
-          <form action={completeTradeAction} className="mt-5">
-            <input type="hidden" name="tradeId" value={trade.id} />
-            <Button className="w-full">סמן/י כהושלם</Button>
-          </form>
+        {!isSuspended && trade.status === "accepted" && (
+          <TradeActionForm tradeId={trade.id} action={completeTradeAction} label="סמן/י כהושלם" className="mt-5" />
         )}
 
         {contactRevealed && (
@@ -130,9 +133,9 @@ export default async function TradeDetailPage({ params }: { params: Promise<{ id
         <TradeChat
           key={trade.id}
           tradeRequestId={trade.id}
-          currentUserId={currentUserId}
+          currentUserId={myProfile.id}
           initialMessages={messages}
-          disabled={trade.status === "declined" || trade.status === "cancelled"}
+          disabled={isSuspended || trade.status === "declined" || trade.status === "cancelled"}
         />
       </div>
     </div>
