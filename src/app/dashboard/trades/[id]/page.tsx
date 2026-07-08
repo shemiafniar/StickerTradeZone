@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import { getTradeRequestById } from "@/lib/data/trades";
-import { getRevealedContact } from "@/lib/data/profile";
+import { getRevealedContact, getCurrentUserId } from "@/lib/data/profile";
+import { getTradeMessages } from "@/lib/data/chat";
 import { Card } from "@/components/ui/Card";
 import { TradeStatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { TradeChat } from "@/components/trades/TradeChat";
 import {
   acceptTradeAction,
   cancelTradeAction,
@@ -15,8 +17,12 @@ export const metadata = { title: "פרטי טרייד | Sticker Trade IL" };
 
 export default async function TradeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const trade = await getTradeRequestById(id);
-  if (!trade) notFound();
+  const [trade, currentUserId, messages] = await Promise.all([
+    getTradeRequestById(id),
+    getCurrentUserId(),
+    getTradeMessages(id),
+  ]);
+  if (!trade || !currentUserId) notFound();
 
   const contactRevealed = trade.status === "accepted" || trade.status === "completed";
   const contact = contactRevealed && trade.otherUser ? await getRevealedContact(trade.otherUser.id) : null;
@@ -119,6 +125,16 @@ export default async function TradeDetailPage({ params }: { params: Promise<{ id
           </div>
         )}
       </Card>
+
+      <div className="mt-4">
+        <TradeChat
+          key={trade.id}
+          tradeRequestId={trade.id}
+          currentUserId={currentUserId}
+          initialMessages={messages}
+          disabled={trade.status === "declined" || trade.status === "cancelled"}
+        />
+      </div>
     </div>
   );
 }
