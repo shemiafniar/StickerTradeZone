@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { LOCATION_RANK_LABEL } from "@/lib/cities";
+import { formatDistanceHebrew } from "@/lib/distance";
 import { formatStickerNumbersAsRanges } from "@/lib/stickerInput";
 import type { MatchResult } from "@/lib/matching";
 
@@ -19,9 +20,13 @@ export function MatchCard({ match }: { match: MatchResult }) {
             {match.neighborhood ? ` · ${match.neighborhood}` : ""}
           </p>
         </div>
-        <Badge className={match.locationRank === 0 ? "bg-brand/10 text-brand-dark" : undefined}>
-          {LOCATION_RANK_LABEL[match.locationRank]}
-        </Badge>
+        {match.distanceKm !== null ? (
+          <Badge className="bg-brand/10 text-brand-dark">📍 {formatDistanceHebrew(match.distanceKm)}</Badge>
+        ) : (
+          <Badge className={match.locationRank === 0 ? "bg-brand/10 text-brand-dark" : undefined}>
+            {LOCATION_RANK_LABEL[match.locationRank]}
+          </Badge>
+        )}
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3">
@@ -44,6 +49,13 @@ export function MatchCard({ match }: { match: MatchResult }) {
       {match.forSaleThatINeed.length > 0 && (
         <p className="mt-3 text-xs font-medium text-orange-700">
           💰 {match.forSaleThatINeed.length} מהמדבקות שחסרות לך זמינות אצלו/ה גם למכירה
+          {match.forSaleThatINeed.some((s) => s.price != null) && (
+            <>
+              {" "}
+              (החל מ-{Math.min(...match.forSaleThatINeed.filter((s) => s.price != null).map((s) => s.price!))}
+              ₪)
+            </>
+          )}
         </p>
       )}
 

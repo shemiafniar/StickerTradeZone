@@ -50,7 +50,7 @@ export default async function StickersPage({
             <h2 className="mb-3 text-lg font-bold">הוספת מדבקות כפולות</h2>
             <BulkStickerForm
               action={bulkAddDuplicatesAction}
-              showForSale
+              showListingType
               placeholder="לדוגמה: 1-20, 34, 56-60"
             />
             <DuplicateList items={duplicates} />

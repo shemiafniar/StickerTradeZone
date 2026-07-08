@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { Textarea } from "@/components/ui/Field";
+import { Textarea, Select, Label } from "@/components/ui/Field";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { ErrorMessage, SuccessMessage } from "@/components/ui/FormMessage";
 import type { StickerActionState } from "@/lib/actions/stickers";
@@ -10,11 +10,11 @@ const initialState: StickerActionState = {};
 
 export function BulkStickerForm({
   action,
-  showForSale,
+  showListingType,
   placeholder,
 }: {
   action: (state: StickerActionState, formData: FormData) => Promise<StickerActionState>;
-  showForSale?: boolean;
+  showListingType?: boolean;
   placeholder: string;
 }) {
   const [state, formAction] = useActionState(action, initialState);
@@ -29,11 +29,18 @@ export function BulkStickerForm({
         ניתן להזין מספרים בודדים (1,2,3), טווחים (1-20) או שילוב של שניהם, מופרדים בפסיקים.
       </p>
 
-      {showForSale && (
-        <label className="mt-3 flex items-center gap-2 text-sm font-medium text-foreground/70">
-          <input type="checkbox" name="forSale" className="h-4 w-4 rounded accent-brand" />
-          זמין גם למכירה (לא רק להחלפה)
-        </label>
+      {showListingType && (
+        <div className="mt-3 max-w-xs">
+          <Label htmlFor="listingType">איך להציג את המדבקות האלו?</Label>
+          <Select id="listingType" name="listingType" defaultValue="trade">
+            <option value="trade">להחלפה בלבד</option>
+            <option value="sale">למכירה בלבד</option>
+            <option value="both">להחלפה או למכירה</option>
+          </Select>
+          <p className="mt-1 text-xs text-foreground/50">
+            אפשר לשנות מחיר והערה לכל מדבקה בנפרד ברשימה למטה.
+          </p>
+        </div>
       )}
 
       <SubmitButton className="mt-3 w-full sm:w-auto">הוספה מהירה</SubmitButton>

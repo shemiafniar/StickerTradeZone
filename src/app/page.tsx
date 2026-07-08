@@ -1,5 +1,7 @@
 import { LinkButton } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { ShareButtons } from "@/components/share/ShareButtons";
+import { getSiteUrl } from "@/lib/site";
 import { getCurrentProfile } from "@/lib/data/profile";
 import { redirect } from "next/navigation";
 
@@ -87,6 +89,10 @@ export default async function LandingPage() {
           <LinkButton href="/register" variant="secondary" size="lg" className="mt-6">
             הרשמה חינם
           </LinkButton>
+
+          <div className="mt-6 flex justify-center">
+            <ShareButtons url={getSiteUrl()} compact />
+          </div>
         </div>
       </section>
     </div>

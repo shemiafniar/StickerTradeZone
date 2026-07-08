@@ -6,6 +6,7 @@ import { SummaryCard } from "@/components/SummaryCard";
 import { Card } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import { TradeStatusBadge } from "@/components/ui/Badge";
+import { ShareCard } from "@/components/share/ShareCard";
 import Link from "next/link";
 
 export const metadata = { title: "לוח בקרה | Sticker Trade IL" };
@@ -41,6 +42,23 @@ export default async function DashboardPage() {
         <SummaryCard icon="🔁" label="מדבקות כפולות" value={counts.duplicates} href="/dashboard/stickers?tab=duplicates" accent="green" />
         <SummaryCard icon="📍" label="התאמות קרובות" value={matches.length} href="/dashboard/matches" accent="blue" />
       </div>
+
+      {counts.missing === 0 && counts.duplicates === 0 && (
+        <Card className="mt-6 border-brand/20 bg-brand/5">
+          <p className="font-bold text-brand-dark">👋 עוד לא סימנת מדבקות - בואו נתחיל!</p>
+          <p className="mt-1 text-sm text-foreground/70">
+            הדרך המהירה ביותר: צלמו את הכפולים או עמוד באלבום עם{" "}
+            <Link href="/dashboard/scanner" className="font-bold text-brand-dark underline">
+              סורק ה-AI
+            </Link>
+            . אפשר גם להזין ידנית בעמוד{" "}
+            <Link href="/dashboard/stickers" className="font-bold text-brand-dark underline">
+              המדבקות שלי
+            </Link>
+            .
+          </p>
+        </Card>
+      )}
 
       {pendingIncoming.length > 0 && (
         <Card className="mt-6 border-amber-200 bg-amber-50">
@@ -84,6 +102,10 @@ export default async function DashboardPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="mt-8">
+        <ShareCard />
       </div>
     </div>
   );
