@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import type { Profile, TradeRequest, UserDuplicate, UserMissing } from "@/types/database";
+import type { Profile, TradeRequest, UserSticker } from "@/types/database";
 
 export interface AdminUserRow extends Profile {
   duplicatesCount: number;
@@ -15,21 +15,17 @@ export async function getAdminUsers(cityFilter?: string): Promise<AdminUserRow[]
     query = query.ilike("city", `%${cityFilter}%`);
   }
 
-  const [{ data: profiles }, { data: duplicates }, { data: missing }, { data: trades }] = await Promise.all([
+  const [{ data: profiles }, { data: userStickers }, { data: trades }] = await Promise.all([
     query,
-    supabase.from("user_duplicates").select("user_id"),
-    supabase.from("user_missing").select("user_id"),
+    supabase.from("user_stickers").select("user_id, status"),
     supabase.from("trade_requests").select("from_user_id, to_user_id"),
   ]);
 
   const dupCounts = new Map<string, number>();
-  for (const d of (duplicates as Pick<UserDuplicate, "user_id">[]) ?? []) {
-    dupCounts.set(d.user_id, (dupCounts.get(d.user_id) ?? 0) + 1);
-  }
-
   const missingCounts = new Map<string, number>();
-  for (const m of (missing as Pick<UserMissing, "user_id">[]) ?? []) {
-    missingCounts.set(m.user_id, (missingCounts.get(m.user_id) ?? 0) + 1);
+  for (const row of (userStickers as Pick<UserSticker, "user_id" | "status">[]) ?? []) {
+    const map = row.status === "duplicate" ? dupCounts : row.status === "missing" ? missingCounts : null;
+    if (map) map.set(row.user_id, (map.get(row.user_id) ?? 0) + 1);
   }
 
   const tradeCounts = new Map<string, number>();
@@ -60,22 +56,22 @@ export interface AdminStats {
 export async function getAdminStats(): Promise<AdminStats> {
   const supabase = await createClient();
 
-  const [profiles, duplicates, missing, trades] = await Promise.all([
+  const [profiles, userStickers, trades] = await Promise.all([
     supabase.from("profiles").select("status"),
-    supabase.from("user_duplicates").select("id", { count: "exact", head: true }),
-    supabase.from("user_missing").select("id", { count: "exact", head: true }),
+    supabase.from("user_stickers").select("status"),
     supabase.from("trade_requests").select("status"),
   ]);
 
   const profileRows = (profiles.data as { status: string }[]) ?? [];
+  const stickerRows = (userStickers.data as Pick<UserSticker, "status">[]) ?? [];
   const tradeRows = (trades.data as { status: string }[]) ?? [];
 
   return {
     totalUsers: profileRows.length,
     activeUsers: profileRows.filter((p) => p.status === "active").length,
     suspendedUsers: profileRows.filter((p) => p.status === "suspended").length,
-    totalDuplicates: duplicates.count ?? 0,
-    totalMissing: missing.count ?? 0,
+    totalDuplicates: stickerRows.filter((s) => s.status === "duplicate").length,
+    totalMissing: stickerRows.filter((s) => s.status === "missing").length,
     totalTradeRequests: tradeRows.length,
     pendingTradeRequests: tradeRows.filter((t) => t.status === "pending").length,
     completedTradeRequests: tradeRows.filter((t) => t.status === "completed").length,

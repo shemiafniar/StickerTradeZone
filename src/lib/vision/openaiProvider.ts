@@ -1,4 +1,4 @@
-import type { AlbumScanResult, DuplicateScanResult, VisionProvider } from "@/lib/vision/types";
+import type { BackScanResult, VisionProvider } from "@/lib/vision/types";
 
 const DEFAULT_MODEL = "gpt-4o-mini";
 
@@ -15,7 +15,7 @@ async function callOpenAiVision(imageBase64: string, mimeType: string, prompt: s
     body: JSON.stringify({
       model: process.env.OPENAI_VISION_MODEL ?? DEFAULT_MODEL,
       response_format: { type: "json_object" },
-      max_tokens: 1000,
+      max_tokens: 1500,
       messages: [
         {
           role: "user",
@@ -49,42 +49,33 @@ export class OpenAiVisionProvider implements VisionProvider {
   name = "OpenAI Vision";
   isMock = false;
 
-  async scanDuplicates(imageBase64: string, mimeType: string): Promise<DuplicateScanResult> {
-    const prompt = `You are looking at a photo of several loose football/soccer sticker album cards laid out on a surface.
-Each sticker has a printed number (usually small, in a corner or on an edge).
-Identify every distinct sticker number you can read.
+  async scanStickerBacks(imageBase64: string, mimeType: string): Promise<BackScanResult> {
+    const prompt = `You are looking at a photo of several football/soccer sticker BACKS (the reverse side of the stickers) laid out on a surface.
+Each sticker's back has a unique identifier printed in a top-right corner, made of a 3-letter country/team code followed by a number from 1 to 20, for example "GER 2", "FRA 17", "POR 5", "COL 19".
+Identify every distinct sticker back you can read.
 Respond ONLY with strict JSON of the shape:
-{"detected": [{"number": <integer>, "confidence": <0-1 float>}]}
-If you cannot read a number confidently, still include your best guess with a lower confidence score. Do not invent stickers that clearly aren't present.`;
+{"detected": [{"teamCode": "<3-letter code>", "number": <integer 1-20>, "confidence": <0-1 float>}]}
+If you cannot read an identifier confidently, still include your best guess with a lower confidence score. Do not invent stickers that clearly aren't present.`;
 
     const raw = await callOpenAiVision(imageBase64, mimeType, prompt);
-    const parsed = JSON.parse(raw) as { detected?: { number: number; confidence: number }[] };
+    const parsed = JSON.parse(raw) as {
+      detected?: { teamCode: string; number: number; confidence: number }[];
+    };
 
     return {
       detected: (parsed.detected ?? [])
-        .filter((d) => Number.isFinite(d.number) && d.number > 0)
-        .map((d) => ({ number: Math.round(d.number), confidence: Math.min(1, Math.max(0, d.confidence ?? 0.5)) })),
-      isMock: false,
-    };
-  }
-
-  async scanAlbumPage(imageBase64: string, mimeType: string): Promise<AlbumScanResult> {
-    const prompt = `You are looking at a photo of an open football/soccer sticker album page.
-Each slot on the page has a printed number. A slot is "filled" if a sticker is placed over it, and "empty" if the printed slot outline/number is still visible with no sticker on it.
-Identify every slot number you can read and whether it is filled or empty.
-Respond ONLY with strict JSON of the shape:
-{"slots": [{"number": <integer>, "filled": <boolean>, "confidence": <0-1 float>}]}`;
-
-    const raw = await callOpenAiVision(imageBase64, mimeType, prompt);
-    const parsed = JSON.parse(raw) as { slots?: { number: number; filled: boolean; confidence: number }[] };
-
-    return {
-      slots: (parsed.slots ?? [])
-        .filter((s) => Number.isFinite(s.number) && s.number > 0)
-        .map((s) => ({
-          number: Math.round(s.number),
-          filled: Boolean(s.filled),
-          confidence: Math.min(1, Math.max(0, s.confidence ?? 0.5)),
+        .filter(
+          (d) =>
+            typeof d.teamCode === "string" &&
+            /^[A-Za-z]{3}$/.test(d.teamCode) &&
+            Number.isFinite(d.number) &&
+            d.number >= 1 &&
+            d.number <= 20
+        )
+        .map((d) => ({
+          teamCode: d.teamCode.toUpperCase(),
+          number: Math.round(d.number),
+          confidence: Math.min(1, Math.max(0, d.confidence ?? 0.5)),
         })),
       isMock: false,
     };

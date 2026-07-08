@@ -3,6 +3,7 @@ export type TradeItemDirection = "give" | "receive";
 export type UserRole = "user" | "admin";
 export type UserStatus = "active" | "suspended";
 export type ListingType = "trade" | "sale" | "both";
+export type StickerStatus = "have" | "duplicate" | "missing";
 export type NotificationType =
   | "trade_request_received"
   | "trade_accepted"
@@ -37,11 +38,23 @@ export type ProfileContact = {
   updated_at: string;
 };
 
+/** A participating national team, shown as a card in the visual collection UI. */
+export type Team = {
+  code: string;
+  name_he: string;
+  flag_emoji: string;
+  sort_order: number;
+  created_at: string;
+};
+
+/** A single sticker slot, uniquely identified by `code` (e.g. "GER-2"). */
 export type Sticker = {
   id: string;
+  team_code: string;
+  /** 1-20, the sticker's position within its team. */
   number: number;
-  name: string | null;
-  team: string | null;
+  /** Unique identifier, always `${team_code}-${number}` (e.g. "GER-2"). */
+  code: string;
   created_at: string;
 };
 
@@ -52,22 +65,20 @@ export type AppSettings = {
   updated_at: string;
 };
 
-export type UserDuplicate = {
+/**
+ * One row per (user, sticker) the user has marked. No row = unmarked/gray.
+ * `listing_type`/`price`/`note` are only meaningful when status = 'duplicate'.
+ */
+export type UserSticker = {
   id: string;
   user_id: string;
   sticker_id: string;
-  quantity: number;
+  status: StickerStatus;
   listing_type: ListingType;
   price: number | null;
   note: string | null;
   created_at: string;
-};
-
-export type UserMissing = {
-  id: string;
-  user_id: string;
-  sticker_id: string;
-  created_at: string;
+  updated_at: string;
 };
 
 export type TradeRequest = {
@@ -111,7 +122,7 @@ export type Notification = {
   created_at: string;
 };
 
-export type ScanMode = "duplicates" | "album";
+export type ScanMode = "sticker_backs";
 
 export type ScanEvent = {
   id: string;
@@ -144,9 +155,15 @@ export type Database = {
         Update: Partial<ProfileContact>;
         Relationships: [];
       };
+      teams: {
+        Row: Team;
+        Insert: Partial<Team> & { code: string; name_he: string; flag_emoji: string };
+        Update: Partial<Team>;
+        Relationships: [];
+      };
       stickers: {
         Row: Sticker;
-        Insert: Partial<Sticker> & { number: number };
+        Insert: Partial<Sticker> & { team_code: string; number: number; code: string };
         Update: Partial<Sticker>;
         Relationships: [];
       };
@@ -156,16 +173,10 @@ export type Database = {
         Update: Partial<AppSettings>;
         Relationships: [];
       };
-      user_duplicates: {
-        Row: UserDuplicate;
-        Insert: Partial<UserDuplicate> & { user_id: string; sticker_id: string };
-        Update: Partial<UserDuplicate>;
-        Relationships: [];
-      };
-      user_missing: {
-        Row: UserMissing;
-        Insert: Partial<UserMissing> & { user_id: string; sticker_id: string };
-        Update: Partial<UserMissing>;
+      user_stickers: {
+        Row: UserSticker;
+        Insert: Partial<UserSticker> & { user_id: string; sticker_id: string; status: StickerStatus };
+        Update: Partial<UserSticker>;
         Relationships: [];
       };
       trade_requests: {
@@ -221,8 +232,8 @@ export type Database = {
         Args: { uid?: string };
         Returns: boolean;
       };
-      generate_sticker_range: {
-        Args: { p_total: number };
+      admin_add_team: {
+        Args: { p_code: string; p_name_he: string; p_flag_emoji: string | null; p_sort_order?: number | null };
         Returns: undefined;
       };
       nearby_distances: {
