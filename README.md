@@ -19,6 +19,9 @@ bootstrap passes.
 - [Next.js 16](https://nextjs.org/) (App Router, Server Components, Server Actions) + TypeScript
 - [Tailwind CSS v4](https://tailwindcss.com/)
 - [Supabase](https://supabase.com/) (Postgres, Auth, Row Level Security, Realtime)
+- GitHub Actions CI/CD: automatically tests every migration against a throwaway Postgres on PRs, and
+  deploys new migrations to production on merge to `main` - see
+  [Automated database migrations](#automated-database-migrations-cicd)
 - Hebrew RTL UI (`Heebo` font), mobile-first design
 - Pluggable Vision/OCR provider for the AI Sticker Scanner (mock by default, OpenAI Vision ready to
   enable)
@@ -99,7 +102,11 @@ src/
     stickerCodes.ts        Sticker code parsing/formatting/validation ("GER-2", "GER 1-3 · FRA 17")
   types/database.ts        Hand-written Supabase Database types
   proxy.ts                 Next.js 16 "proxy" (formerly middleware) - session refresh + route guards
+.github/workflows/database.yml  Tests every migration on PRs; deploys new migrations to production
+                                   automatically on merge to main (see "Automated database migrations")
 supabase/
+  config.toml                        Supabase CLI project config (`supabase link`/`db push`/`start`)
+  testing/auth_schema_stub.sql        Minimal auth.users/auth.uid() stand-in, CI-only (not a real project)
   migrations/0001_schema.sql         Core tables, indexes, triggers, helper functions
   migrations/0002_rls_policies.sql   Core Row Level Security policies
   migrations/0003_location.sql       profile_locations table + haversine/nearby_distances RPCs
@@ -433,6 +440,93 @@ backend (Google Cloud Vision, a custom model, etc.), implement the interface and
 stickers are marked `status = 'have'` (green) in `user_stickers`, unless already marked `'duplicate'`
 (blue) - a scan never silently removes a sticker from someone's marketplace listings.
 
+## Automated database migrations (CI/CD)
+
+**Root cause of a real incident**: migration `0011_shashot_teams.sql` was merged to `main` but never
+actually applied to the production database - `select count(*) from public.teams` failed with
+`relation "public.teams" does not exist` in production, even though the file was clearly present in
+the repo. This happened because **this repo had no automation of any kind that applies
+`supabase/migrations/*.sql` anywhere** - the "Getting started" instructions below always said to run
+migrations "in the Supabase SQL Editor (or via `supabase db push` / `psql` locally)", i.e. as a
+**manual step a human has to remember to do after every single merge**. It's easy to forget, and
+nothing in CI or the deploy pipeline ever verified it happened - Vercel deploys the Next.js app
+regardless of whether the database schema it depends on actually matches.
+
+**The fix**: `.github/workflows/database.yml`, which removes the human from this loop entirely:
+
+1. **`test-migrations`** runs on every pull request (and push to `main`) that touches
+   `supabase/migrations/**`: it spins up a throwaway Postgres container, simulates just enough of
+   Supabase's `auth` schema for our migrations to reference (`supabase/testing/auth_schema_stub.sql`),
+   and applies every migration file in order, then `seed.sql` as a sanity check. A broken migration
+   now **fails the PR**, before it can ever reach `main` - this is exactly the kind of mistake that
+   would previously only be discovered in production.
+2. **`deploy-migrations`** runs on every push to `main` that passes (1): it uses the official
+   `supabase/setup-cli` action to run `supabase link` + `supabase db push` against the real project -
+   `db push` only applies migrations Supabase's own tracking table (`supabase_migrations.schema_migrations`)
+   doesn't already have a record of, so merging a PR with a new migration file is now the *entire*
+   deployment step. No SQL Editor, no `psql`, no human in the loop.
+
+### Required one-time setup (do this before merging any more migrations)
+
+This workflow needs three **GitHub Actions repository secrets** (Settings → Secrets and variables →
+Actions in this GitHub repo - **not** Cursor's Cloud Agent secrets, which only apply to this
+sandbox, and **not** Vercel's environment variables, which are a separate system entirely):
+
+| Secret | Where to find it |
+| --- | --- |
+| `SUPABASE_ACCESS_TOKEN` | [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens) → Generate new token |
+| `SUPABASE_PROJECT_ID` | Your project's dashboard URL: `https://supabase.com/dashboard/project/<this-is-it>` |
+| `SUPABASE_DB_PASSWORD` | Supabase dashboard → Project Settings → Database → Database password (the one you set when creating the project; reset it there if you don't have it) |
+
+After adding these, the **first** `deploy-migrations` run will hit a real problem worth knowing
+about: migrations `0001`-`0010` were applied to production by hand (via the SQL Editor), so Supabase's
+`supabase_migrations.schema_migrations` tracking table has **no record** of them ever running. A
+naive `supabase db push` would try to re-run all 11 migrations from scratch and fail on the ones that
+try to create already-existing tables. Fix this **once**, from a machine with the Supabase CLI and
+network access to your project:
+
+```bash
+npx supabase login
+npx supabase link --project-ref <your-project-ref>
+
+# 1. Get production's public schema in sync RIGHT NOW (unblocks the app immediately):
+#    copy the full contents of supabase/migrations/0011_shashot_teams.sql into the
+#    Supabase Dashboard -> SQL Editor and run it, if you haven't already.
+
+# 2. Tell Supabase's tracking table that 0001-0011 are already applied, so future
+#    `db push` runs only ever apply what's genuinely new from here on:
+npx supabase migration repair --status applied 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011
+
+# 3. Confirm local and remote agree before trusting CI with it:
+npx supabase migration list
+```
+
+`migration list` should show every version present in both the `Local` and `Remote` columns after
+this. From this point on, **never** apply a migration by hand again - merge the PR, and
+`deploy-migrations` does it for you. (If you ever do need to run one manually in an emergency, run
+`supabase migration repair --status applied <version>` for it afterward so the tracking table stays
+truthful - an untracked manual change is exactly how this incident happened in the first place.)
+
+The `deploy-migrations` job runs under a GitHub **Environment** named `production`. This works with
+zero extra configuration, but if you'd like a manual approval gate before any migration reaches your
+real database (e.g. requiring a specific person to click "Approve" in the Actions tab), configure
+that in this GitHub repo's **Settings → Environments → production → Required reviewers** - this repo
+intentionally ships without that gate by default, per the requirement that merging should be the only
+step needed, but it's a one-click opt-in if you want extra ceremony around production schema changes.
+
+### Why not just re-run every migration idempotently and skip the tracking table?
+
+Every migration in this repo is deliberately written to be idempotent (`create table if not exists`,
+`drop policy if exists` + `create policy`, `create or replace function`, etc.) specifically so that a
+mistake like this is *recoverable* rather than catastrophic - and it's a big part of why the
+production incident above was a missing-migration problem and not a data-loss problem. But relying on
+blind idempotent re-runs as the *primary* deployment mechanism is fragile: `0011` includes real data
+migrations (remapping existing rows, then dropping the old tables) that are only safe to run once, and
+Supabase's own tooling (`db push`, `migration list`, `migration repair`) is built around trusting the
+tracking table - fighting that model instead of using it is how projects end up with permanently
+confusing "is this actually applied?" drift. Doing the one-time repair above costs a few minutes and
+gets this repo fully aligned with how `supabase db push` is meant to be used going forward.
+
 ## Getting started
 
 ### 1. Create a Supabase project
@@ -441,6 +535,11 @@ Create a free project at [supabase.com](https://supabase.com), or run Supabase l
 [Supabase CLI](https://supabase.com/docs/guides/local-development) (`supabase start`).
 
 ### 2. Run the database migrations, in order
+
+**If this project is already wired up to [`.github/workflows/database.yml`](#automated-database-migrations-cicd)
+(GitHub Actions secrets configured, tracking table repaired)**, merging to `main` applies every
+migration automatically - you can skip straight to step 3. The steps below are for the very first
+setup of a brand new project (before CI is wired up), or for local development via the Supabase CLI.
 
 In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 
@@ -575,25 +674,34 @@ system automatically generates that team's 20 stickers (`CODE-1` through `CODE-2
 ## Deploying to Vercel + Supabase
 
 1. **Supabase**: create a project, run all 11 migrations from `supabase/migrations/` in order (SQL
-   Editor or `supabase db push`). Do **not** run `seed.sql` against it (it has a built-in guard that
-   refuses to run if it detects any non-demo account already exists, but the safest rule is simply:
-   don't run it against a hosted project at all).
-2. **Supabase Auth URLs**: in **Authentication → URL Configuration**, set the Site URL to your
+   Editor or `supabase db push`) to get the initial schema in place. Do **not** run `seed.sql`
+   against it (it has a built-in guard that refuses to run if it detects any non-demo account already
+   exists, but the safest rule is simply: don't run it against a hosted project at all).
+2. **Wire up automated migrations** (do this once, right after step 1): add the three GitHub Actions
+   secrets described in [Automated database migrations](#automated-database-migrations-cicd) above
+   (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`), then run the one-time
+   `supabase migration repair --status applied ...` command from that section so Supabase's tracking
+   table matches what you just applied by hand in step 1. From then on, `.github/workflows/database.yml`
+   applies every future migration automatically on merge to `main` - **no more manual SQL Editor
+   visits, ever**, which is exactly the gap that let a real migration ship to `main` without ever
+   reaching production (see that section for the full incident writeup).
+3. **Supabase Auth URLs**: in **Authentication → URL Configuration**, set the Site URL to your
    Vercel URL and add it to the Redirect URLs allow-list (see "Configure Auth URLs" in
    [Getting started](#getting-started) above). Required for email confirmation to work.
-3. **Vercel**: import this repo, framework preset "Next.js" (auto-detected). Add the environment
+4. **Vercel**: import this repo, framework preset "Next.js" (auto-detected). Add the environment
    variables from `.env.example` in Project Settings → Environment Variables:
    - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (from Supabase → Settings → API)
    - `NEXT_PUBLIC_SITE_URL` set to your production URL (e.g. `https://your-app.vercel.app`) - not
      strictly required (see "Recommended" above) but avoids any ambiguity across preview deployments
    - `OPENAI_API_KEY` (optional, enables real AI Scanner detection)
-4. Deploy. No build-time secrets or server infra beyond Supabase + Vercel are required - there's no
-   custom server, cron job, or queue in this Beta.
-5. Sign up through the live app. **You're automatically an admin** - nothing else to configure. The
+5. Deploy. No build-time secrets or server infra beyond Supabase + Vercel (+ GitHub Actions for step
+   2) are required - there's no custom server, cron job, or queue in this Beta.
+6. Sign up through the live app. **You're automatically an admin** - nothing else to configure. The
    sticker catalog (32 teams × 20 stickers) is already seeded; add more teams any time from
    **אזור ניהול → קטלוג מדבקות** if you like.
 
-That's the entire deployment - no SQL editor visits after step 1, no manual profile/role edits, ever.
+That's the entire deployment - after the one-time setup in steps 1-2, there are no more SQL editor
+visits or manual profile/role edits, for this release or any future one.
 
 ### Production checklist (verified during the production-bootstrap pass)
 
@@ -750,6 +858,12 @@ third-party share sheets) can't be fully exercised in CI:
 - [ ] Fresh Supabase project: run all 11 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
+- [ ] Confirm the 3 GitHub Actions secrets for `.github/workflows/database.yml` are set
+      (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`) and that
+      `supabase migration list` shows every version in both the Local and Remote columns (see
+      [Automated database migrations](#automated-database-migrations-cicd)) - then push a trivial
+      no-op migration file and confirm the `deploy-migrations` job actually runs and succeeds in the
+      GitHub Actions tab, so you know it's really wired up before relying on it for anything real
 - [ ] Confirm the Auth URL Configuration (Site URL + Redirect URLs) is set for your deployed domain
 - [ ] If offering Google sign-in, confirm the Google Cloud OAuth client's authorized redirect URI
       matches your Supabase project's callback URL exactly, and that the provider is enabled in
@@ -763,6 +877,18 @@ third-party share sheets) can't be fully exercised in CI:
 
 ## Known limitations / TODOs for future releases
 
+- **`.github/workflows/database.yml` requires a one-time manual setup** (3 GitHub Actions secrets +
+  one `supabase migration repair` command - see
+  [Automated database migrations](#automated-database-migrations-cicd)) before it can deploy anything.
+  Until that's done for a given Supabase project, new migrations still need to be applied by hand for
+  that project - the workflow itself can't bootstrap its own credentials. This is inherent to any
+  CI/CD-to-a-secret-holding-service setup, not something more code in this repo can remove.
+- **No automatic rollback.** `supabase db push` only ever applies forward migrations; if a migration
+  merged to `main` turns out to be broken in a way `test-migrations` didn't catch, fixing it means
+  writing and merging a new forward migration (e.g. a `0012_fix_...sql`), not reverting `0011`'s file
+  in git - Supabase's tracking table doesn't know about a migration that's already partially applied
+  being deleted from the repo. Standard practice for any migration-based schema tool, documented here
+  since it's a real behavior change from "nothing was automated, so nothing broke automatically."
 - **Account linking across providers is whatever Supabase's project-level default is.** If someone
   registers with email/password using `foo@gmail.com` and later tries "Continue with Google" with
   that same address, Supabase's own account-linking behavior applies (this app doesn't add any
