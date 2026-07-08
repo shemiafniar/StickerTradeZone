@@ -8,7 +8,8 @@ trade or sell with.
 > community-built collector trade zone. See the footer disclaimer shown on every page.
 
 This README covers the public **Beta** release. The original MVP is preserved in git history / PR
-#1; everything below is additive on top of it.
+#1, and the initial Beta feature set in PR #2; this revision adds a QA/security/production-hardening
+pass (PR #3) with no new product features.
 
 ## Tech stack
 
@@ -83,6 +84,7 @@ supabase/
   migrations/0004_trade_chat.sql     trade_messages table, RLS, Realtime
   migrations/0005_notifications.sql  notifications table, RLS, trigger-based notification creation
   migrations/0006_marketplace.sql    listing_type/price/note on user_duplicates
+  migrations/0007_hardening.sql      Suspended-user write enforcement, scan_events rate-limit table
   seed.sql                           Local-dev-only seed data (catalog + demo users + trades + chat)
 ```
 
@@ -109,6 +111,36 @@ coordinates. On top of that:
   hides it.
 - Users without a stored location automatically fall back to city/region-based ranking - nothing
   breaks or requires location to be useful.
+
+### Suspended users are blocked at the database level
+
+Suspending a user (`profiles.status = 'suspended'`) does more than hide UI buttons: an
+`is_active_user()` check is baked into the RLS policy for creating trade requests, into the
+`validate_trade_status_transition()` trigger (accept/decline/complete/cancel), and into the RLS
+policy for sending chat messages (`0007_hardening.sql`). A suspended account can still log in, view
+its own data, and manage its own duplicates/missing list (that's not an abuse vector), but cannot
+contact or trade with other collectors - even via a hand-crafted API request that bypasses the UI
+entirely. The relevant Server Actions also check this up front to show a clear Hebrew error instead
+of a raw Postgres exception.
+
+### Rate limiting & abuse prevention
+
+Two complementary layers, chosen per action based on what's accurate and cheap:
+
+- **DB-backed limits** (accurate across serverless instances) for actions that already have a
+  natural table to count against: trade request creation (20/hour/user), chat messages
+  (40/10min/user), and AI Scanner uploads (20/hour/user, backed by the new `scan_events` table,
+  which doubles as a lightweight audit log).
+- **In-process limits** (`src/lib/rateLimit.ts`) for auth actions (sign up: 6/hour/IP, sign in:
+  10/5min/IP+email), where creating a database row per attempt (including failed/malicious ones)
+  isn't desirable. This is intentionally a "basic" first line of defense - see the code comment in
+  `rateLimit.ts` for why it isn't a substitute for a distributed limiter (e.g. Redis) at real scale,
+  and note that Supabase Auth enforces its own server-side limits on top of this regardless.
+
+The AI Scanner also validates uploads both client-side (`ImageDropzone`) and server-side
+(`src/lib/actions/scanner.ts`): file type is restricted to an explicit allow-list (JPEG/PNG/WEBP/HEIC
+- no SVG or other exotic formats) and size is capped at 8MB, with a clear Hebrew error message for
+each failure case.
 
 ### Adding real push/email notifications later
 
@@ -152,12 +184,15 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 4. `supabase/migrations/0004_trade_chat.sql`
 5. `supabase/migrations/0005_notifications.sql`
 6. `supabase/migrations/0006_marketplace.sql`
+7. `supabase/migrations/0007_hardening.sql`
 
-All 6 files were validated end-to-end against a real Postgres instance (schema + RLS + triggers +
-seed) during development - see the PR description for details.
+All 7 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+instance from a completely empty database, both individually and as a full clean run - see the PR
+description for details.
 
-> If you already ran migrations 0001/0002 for the MVP, you only need to additionally run
-> 0003-0006 - they're pure additions/alterations and safe to apply on top.
+> If you already ran migrations 0001-0006 for an earlier release, you only need to additionally run
+> 0007 - it's a pure hardening pass (tightens existing policies/triggers, adds one small
+> `scan_events` table) and is safe to apply on top.
 
 ### 3. Enable Realtime (hosted Supabase projects)
 
@@ -236,8 +271,10 @@ generic numbered stickers without full player/team data).
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 6 migrations from `supabase/migrations/` in order (SQL
-   Editor or `supabase db push`). Do **not** run `seed.sql` against it.
+1. **Supabase**: create a project, run all 7 migrations from `supabase/migrations/` in order (SQL
+   Editor or `supabase db push`). Do **not** run `seed.sql` against it (it has a built-in guard that
+   refuses to run if it detects any non-demo account already exists, but the safest rule is simply:
+   don't run it against a hosted project at all).
 2. **Vercel**: import this repo, framework preset "Next.js" (auto-detected). Add the environment
    variables from `.env.example` in Project Settings → Environment Variables:
    - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (from Supabase → Settings → API)
@@ -249,18 +286,20 @@ generic numbered stickers without full player/team data).
    custom server, cron job, or queue in this Beta.
 5. Promote your own account to admin (see the SQL snippet above) once you've signed up.
 
-### Production checklist (verified during this Beta pass)
+### Production checklist (verified during the QA/hardening pass)
 
-- ✅ `npm run build` (TypeScript strict) and `npm run lint` both pass clean.
+- ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
+- ✅ All 7 migrations + `seed.sql` re-applied from a completely empty Postgres database twice in a
+  row (idempotency check) with zero errors.
 - ✅ Auth flow (register/login/logout) exercised via the dev server; protected `/dashboard` and
-  `/admin` routes correctly 307-redirect unauthenticated requests via `src/proxy.ts`.
-- ✅ RLS re-validated end-to-end on a real local Postgres for every table added in this Beta
-  (`profile_locations`, `trade_messages`, `notifications`, plus the marketplace columns), covering:
-  location privacy (no other user can read raw coordinates), chat isolation (only the two trade
-  participants can read/send), and notification ownership (only the recipient can read/mark-read
-  their own rows).
-- ✅ Admin-only RPCs (`generate_sticker_range`) and the role/status anti-escalation trigger were
-  re-checked against the updated schema.
+  `/admin` routes correctly 307-redirect unauthenticated requests via `src/proxy.ts`; custom
+  `not-found.tsx`/`error.tsx`/`global-error.tsx` pages verified.
+- ✅ RLS re-validated end-to-end on a real local Postgres for every table, including a full security
+  regression pass (see the [manual QA checklist](#manual-qa-checklist-pre-launch) below for the
+  exact scenarios): location privacy, chat isolation, notification spoofing, suspended-user
+  enforcement, and contact-reveal rules.
+- ✅ `getVisionProvider()` confirmed (by unit test and code review) to select the mock provider
+  whenever `OPENAI_API_KEY` is unset/empty, and the real provider only when it's set.
 
 ## Available scripts
 
@@ -269,6 +308,7 @@ npm run dev     # start the dev server
 npm run build   # production build (also runs the TypeScript check)
 npm run start   # run the production build
 npm run lint    # ESLint
+npm test        # Vitest unit tests (matching, sticker input parsing, distance, vision provider)
 ```
 
 ## Security notes
@@ -286,10 +326,76 @@ npm run lint    # ESLint
 - A Postgres trigger blocks non-admin users from changing their own `role` or `status` columns,
   even if they craft a raw API request.
 - A second trigger validates trade-request status transitions server-side (e.g. only the recipient
-  may accept/decline; only a participant may complete or cancel), so the UI's button visibility is
-  a UX nicety, not the source of truth.
+  may accept/decline; only a participant may complete or cancel) and also rejects any transition
+  attempted by a suspended account, so the UI's button visibility is a UX nicety, not the source of
+  truth.
+- Suspended users are blocked at the RLS/trigger level from creating trade requests, responding to
+  them, and sending chat messages - not just hidden from the UI. See "Suspended users are blocked at
+  the database level" above.
 - Admin actions (suspend/reactivate users, catalog changes) are written to `admin_logs` for a basic
-  audit trail.
+  audit trail. An admin cannot suspend their own account (checked in the Server Action).
+- Rate limiting on trade requests, chat messages, auth attempts, and AI Scanner uploads - see "Rate
+  limiting & abuse prevention" above.
+- File uploads to the AI Scanner are validated (type allow-list + 8MB size cap) both client- and
+  server-side before ever reaching the Vision provider.
+
+## Manual QA checklist (pre-launch)
+
+Automated coverage (RLS/trigger tests against a real Postgres, `npm test`, `npm run build`/`lint`)
+is described above. Before a public launch, also walk through this list by hand against a real
+Supabase project + deployed frontend, since some of it (browser permissions, realtime delivery,
+third-party share sheets) can't be fully exercised in CI:
+
+**Core user journey**
+
+- [ ] Register a new account (email/password); confirm the profile + contact rows are created
+      automatically and you land on the dashboard (or see the "check your email" message if
+      confirmations are enabled)
+- [ ] Add duplicates manually via the bulk input (single numbers, a range, and a mix)
+- [ ] Add missing stickers manually the same way
+- [ ] Run the AI Scanner in both modes (duplicate photo, album page photo) using the mock provider;
+      correct a detected number, remove a row, add one manually, then save
+- [ ] Enable location from the profile page (grant the browser permission prompt) and confirm the
+      matches page switches to distance-based sorting; disable it again and confirm it falls back to
+      city-based sorting
+- [ ] Find a match and send a trade request with suggested give/receive stickers
+- [ ] As the recipient, accept one trade request and decline another; confirm contact info appears
+      only after acceptance
+- [ ] Send a few chat messages back and forth on an accepted trade; confirm they appear in order,
+      auto-scroll, and the unread badge on the trades list clears after opening the chat
+- [ ] Confirm a notification arrives (bell badge + dropdown) for the trade request, the acceptance,
+      and the chat message; mark one as read and confirm "mark all as read" works
+- [ ] Mark a duplicate as "for sale" with a price and note; confirm it shows up correctly to a
+      collector who needs that sticker
+- [ ] As an admin, suspend a test user, then (as that user) confirm you can no longer send a trade
+      request or a chat message, but can still log in and see the suspension banner; reactivate and
+      confirm actions work again
+
+**Security spot-checks** (safe to do with two browser profiles / incognito windows)
+
+- [ ] Confirm you cannot see another user's exact location anywhere in the UI or network tab -
+      only a distance
+- [ ] Confirm opening a trade chat URL for a trade you're not part of does not show any messages
+- [ ] Confirm contact info is hidden for pending/declined/cancelled trades and only shown once
+      accepted/completed
+
+**Abuse prevention**
+
+- [ ] Trigger the sign-in rate limit by failing a login several times quickly and confirm a clear
+      Hebrew error appears
+- [ ] Try uploading a non-image file (or an oversized image) to the AI Scanner and confirm a clear
+      error appears immediately, without a server round-trip where possible
+
+**Production readiness**
+
+- [ ] Fresh Supabase project: run all 7 migrations in order, confirm no errors, do **not** run
+      `seed.sql`
+- [ ] Confirm `OPENAI_API_KEY` is unset in your deployment and the AI Scanner still works end-to-end
+      via the mock provider (look for the "מצב הדגמה" label in the scan result)
+- [ ] Confirm share buttons work on both a mobile browser (native share sheet or WhatsApp) and
+      desktop (WhatsApp link + copy-to-clipboard)
+- [ ] Load the site on a real phone and check the header, forms, chat, and scanner upload flow for
+      layout issues in RTL
 
 ## Known limitations / TODOs for future releases
 
@@ -300,17 +406,21 @@ npm run lint    # ESLint
   high-score ones.
 - **Push/email notification delivery** is not implemented, only the extensible schema seam
   (`dispatched_channels`) described above.
-- The AI Scanner's OpenAI provider is implemented but unverified against a live key in this
-  environment (no key was available during development) - the mock provider was exercised instead.
-  Double-check prompt/response parsing against real photos before relying on it in production, and
-  consider adding image pre-processing (crop/rotate) for better accuracy.
+- The AI Scanner's OpenAI provider is implemented, gated correctly behind `OPENAI_API_KEY`, and
+  covered by a unit test for provider *selection* - but the actual OpenAI request/response handling
+  is unverified against a live key or real photos in this environment (none was available during
+  development). Test it against real photos and tighten the prompt/parsing before relying on it in
+  production; consider adding image pre-processing (crop/rotate) for better accuracy.
 - Distance-based match sorting currently fetches all candidates in application code (fine at
   current/expected Beta scale); if the user base grows significantly, move the ranking into a
   single SQL function/materialized view.
-- No automated test suite yet (unit tests for `matching.ts`, `stickerInput.ts`, `distance.ts` would
-  be a high-value, low-effort addition).
-- No rate limiting on Server Actions (e.g. chat message spam, scan requests) - fine for a small
-  Beta cohort, worth adding before a large public launch.
+- The in-process auth rate limiter (`src/lib/rateLimit.ts`) resets on cold start and isn't shared
+  across serverless instances - a reasonable "basic" first line of defense per the hardening brief,
+  but a distributed store (e.g. Upstash Redis) would be needed for a stricter guarantee at scale.
+- Unit tests cover the pure logic modules (`matching.ts`, `stickerInput.ts`, `distance.ts`,
+  `cities.ts`, Vision provider selection); there's no integration/E2E test suite yet (e.g.
+  Playwright against a real Supabase test project) - the manual QA checklist above fills that gap
+  for now.
 
 ## MVP scope notes (still true for the Beta)
 
