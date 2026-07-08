@@ -111,6 +111,15 @@ export type Notification = {
   created_at: string;
 };
 
+export type ScanMode = "duplicates" | "album";
+
+export type ScanEvent = {
+  id: string;
+  user_id: string;
+  mode: ScanMode;
+  created_at: string;
+};
+
 export type AdminLog = {
   id: string;
   admin_id: string;
@@ -197,6 +206,12 @@ export type Database = {
         Row: Notification;
         Insert: Partial<Notification> & { user_id: string; type: NotificationType };
         Update: Partial<Notification>;
+        Relationships: [];
+      };
+      scan_events: {
+        Row: ScanEvent;
+        Insert: Partial<ScanEvent> & { user_id: string; mode: ScanMode };
+        Update: Partial<ScanEvent>;
         Relationships: [];
       };
     };
