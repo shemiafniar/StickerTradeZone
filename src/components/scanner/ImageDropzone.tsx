@@ -2,17 +2,35 @@
 
 import { useRef, useState } from "react";
 
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB
+const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+
 export function ImageDropzone({
   onFileSelected,
+  onError,
   disabled,
 }: {
   onFileSelected: (file: File | null) => void;
+  onError?: (message: string) => void;
   disabled?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   function handleFile(file: File | null) {
+    if (file) {
+      if (!ALLOWED_MIME_TYPES.has(file.type)) {
+        onError?.("פורמט קובץ לא נתמך. יש להעלות תמונת JPG, PNG, WEBP או HEIC.");
+        if (inputRef.current) inputRef.current.value = "";
+        return;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        onError?.("התמונה גדולה מדי (מקסימום 8MB). נסו לצלם שוב או לדחוס את התמונה.");
+        if (inputRef.current) inputRef.current.value = "";
+        return;
+      }
+    }
+
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(file ? URL.createObjectURL(file) : null);
     onFileSelected(file);
@@ -23,7 +41,7 @@ export function ImageDropzone({
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
         capture="environment"
         className="hidden"
         disabled={disabled}
@@ -55,7 +73,7 @@ export function ImageDropzone({
         >
           <span className="text-4xl">📸</span>
           <span className="text-sm font-bold text-foreground/70">לחצו לצילום או העלאת תמונה</span>
-          <span className="text-xs text-foreground/40">JPG / PNG, עד 8MB</span>
+          <span className="text-xs text-foreground/40">JPG / PNG / WEBP / HEIC, עד 8MB</span>
         </button>
       )}
     </div>
