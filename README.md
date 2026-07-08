@@ -8,10 +8,12 @@ trade or sell with.
 > community-built collector trade zone. See the footer disclaimer shown on every page.
 
 This README covers the public **Beta** release. The original MVP is preserved in git history / PR
-#1, the initial Beta feature set in PR #2, a QA/security/production-hardening pass in PR #3, and this
-revision (PR #4) closes the remaining gaps in the **production bootstrap** so a fresh Supabase
-project + Vercel deployment works end-to-end with zero manual SQL or database edits after deploying
-- see [Zero-touch production bootstrap](#zero-touch-production-bootstrap) below.
+#1, the initial Beta feature set in PR #2, a QA/security/production-hardening pass in PR #3, PR #4
+closed the remaining gaps in the **production bootstrap** (zero manual SQL/DB edits after deploying
+- see [Zero-touch production bootstrap](#zero-touch-production-bootstrap) below), and this revision
+(PR #5) fixes a real registration error-rendering bug and adds **Google sign-in** - see
+[Auth error handling](#auth-error-handling-never-show-raw-errors) and
+[Google sign-in](#google-sign-in) below.
 
 ## Tech stack
 
@@ -131,6 +133,77 @@ to hand-write a fix. Four things make that true:
    (`src/lib/site.ts`) derives the app's public URL from the request's forwarded host when
    `NEXT_PUBLIC_SITE_URL` isn't set, so auth redirects still go to the right domain on a first deploy
    even if that env var is forgotten.
+
+### Auth error handling (never show raw errors)
+
+A production bug meant the registration form sometimes displayed the literal text `"{}"` instead
+of a readable error. **Root cause**: supabase-js's internal error-message builder
+(`_getErrorMessage()` in `@supabase/auth-js`) falls back to `JSON.stringify(responseBody)` whenever
+a GoTrue error response doesn't contain one of its expected `msg`/`message`/`error_description`/
+`error` fields - which happens for some rate-limit responses, transient gateway errors, and other
+edge-case response shapes. When that happens, `error.message` becomes the ordinary *string* `"{}"`
+(or another JSON fragment), which the old code displayed verbatim because it only translated a
+handful of known messages and returned anything else unchanged.
+
+The fix, in `src/lib/authErrors.ts`, is a **whitelist, not a blacklist**: `normalizeAuthError()`
+only ever returns a message it explicitly recognizes (mapped to Hebrew); everything else - "{}",
+other JSON fragments, network failures, or genuinely unexpected exceptions - falls back to a
+generic, friendly Hebrew message (e.g. `"אירעה שגיאה בהרשמה. נסה שוב בעוד רגע."`). The **original**
+error is always logged server-side first via `console.error()` (captured by Vercel's function
+logs), so the real cause is never actually hidden from whoever needs to debug it - only from the
+end user. Every auth Server Action (`signUpAction`, `signInAction`, `signInWithGoogleAction`) is
+wrapped in a try/catch that routes through this same function, so an unexpected thrown exception
+(e.g. a network failure - reproduced and verified during this fix, see the PR description) is
+handled identically to a normal `{ error }` response from Supabase.
+
+As a second line of defense, `ErrorMessage`/`SuccessMessage` (`src/components/ui/FormMessage.tsx`)
+never render anything other than a string/number/boolean - if a non-primitive value ever reaches
+them (e.g. via a future bug or an `as any` cast), they show a safe generic message instead of the
+raw value, rather than crashing or leaking it.
+
+### Google sign-in
+
+"המשך עם Google" (Continue with Google) is available on both the login and register pages, above
+the email/password form. It's implemented as a normal Supabase OAuth flow, reusing the same
+`/auth/callback` route already built for email confirmation - no new callback infrastructure was
+needed:
+
+1. `GoogleSignInButton` (client component) submits a form to `signInWithGoogleAction`.
+2. That Server Action calls `supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } })`
+   and redirects the browser to the Google consent screen Supabase returns.
+3. After the user approves, Google redirects back to `/auth/callback?code=...`, which exchanges the
+   code for a session exactly like an email confirmation does, then redirects to `/dashboard`.
+4. The **same** `handle_new_user()` trigger used for email signups fires for OAuth signups too
+   (Supabase creates an `auth.users` row for both) - so profile/`profile_contacts` creation and the
+   "first signup becomes admin" bootstrap logic apply identically regardless of provider. Verified
+   directly against a real Postgres: an `auth.users` row shaped like Google's OAuth payload
+   (`raw_user_meta_data` with `full_name`/`avatar_url`, no `city`/`phone`) produces a correct
+   profile, and is promoted to admin when it's the first signup on the database.
+
+Google doesn't provide a city or phone number (our app needs both for matching/trade contact
+reveal), so the dashboard shows a one-time "complete your profile" banner for any account - Google
+or email - missing either field, linking to the profile page. Nothing else about the app's behavior
+changes based on provider; RLS, the security model, and every other flow are provider-agnostic.
+
+#### Enabling Google sign-in (Supabase + Google Cloud dashboard setup)
+
+This requires one-time configuration in two dashboards - no code changes, no SQL:
+
+1. **Google Cloud Console**: create an OAuth 2.0 Client ID (APIs & Services → Credentials →
+   Create Credentials → OAuth client ID → Web application). Add your Supabase project's callback
+   URL as an authorized redirect URI - it's shown on the Supabase side in the next step
+   (`https://<your-project-ref>.supabase.co/auth/v1/callback`).
+2. **Supabase dashboard** → Authentication → Providers → Google: toggle it on, paste the Google
+   Client ID and Client Secret from step 1, save.
+3. Make sure your app's own URL is in Supabase's Auth **Redirect URLs** allow-list (see
+   [Getting started](#getting-started) → "Configure Auth URLs" above) - this is the same
+   requirement email confirmation already has, nothing extra.
+4. That's it - no changes to this repo's code or database are needed to turn Google sign-in on or
+   off; it activates as soon as the provider is enabled in Supabase.
+
+If Google isn't enabled yet, clicking the button shows a clear Hebrew error
+("התחברות עם Google אינה מוגדרת כרגע במערכת") instead of a cryptic failure, thanks to the same
+`normalizeAuthError()` whitelist described above.
 
 ### Location privacy
 
@@ -420,6 +493,11 @@ npm test        # Vitest unit tests (matching, sticker input parsing, distance, 
 - Profile/contact self-healing (see "Zero-touch production bootstrap" above) only ever creates a row
   for the currently-authenticated user's own `auth.uid()` - it cannot be used to create or overwrite
   another user's data, and never overwrites an existing row (`ON CONFLICT DO NOTHING`).
+- Auth errors are never shown to the user verbatim - `normalizeAuthError()` only returns
+  explicitly-whitelisted messages, and the original error is always logged server-side first. See
+  "Auth error handling" above.
+- Google sign-in reuses the exact same profile-creation trigger, RLS policies, and admin-bootstrap
+  logic as email/password signup - there is no separate, weaker code path for OAuth users.
 
 ## Manual QA checklist (pre-launch)
 
@@ -435,6 +513,18 @@ third-party share sheets) can't be fully exercised in CI:
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
       logged in (not back to the login page)
+- [ ] With Google sign-in enabled in Supabase (see "Enabling Google sign-in" above), click
+      "המשך עם Google" on the register page, approve the Google consent screen, and confirm you land
+      in the dashboard with a profile already created (check the "complete your profile" banner
+      prompts for city/phone, since Google doesn't provide them)
+- [ ] Sign in with the same Google account a second time and confirm it logs in (not a duplicate
+      account) and preserves any profile edits made after the first sign-in
+- [ ] If Google sign-in is the very first signup on a fresh project, confirm that account is also
+      automatically an admin, exactly like the first email signup would be
+- [ ] Force a registration error (e.g. temporarily point `NEXT_PUBLIC_SUPABASE_URL` at an invalid
+      host, or just watch for it under real network flakiness) and confirm the form shows a readable
+      Hebrew message - never `"{}"`, raw JSON, or `[object Object]` - and that the real error appears
+      in your server/Vercel logs
 - [ ] Add duplicates manually via the bulk input (single numbers, a range, and a mix)
 - [ ] Add missing stickers manually the same way
 - [ ] Run the AI Scanner in both modes (duplicate photo, album page photo) using the mock provider;
@@ -476,6 +566,9 @@ third-party share sheets) can't be fully exercised in CI:
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
 - [ ] Confirm the Auth URL Configuration (Site URL + Redirect URLs) is set for your deployed domain
+- [ ] If offering Google sign-in, confirm the Google Cloud OAuth client's authorized redirect URI
+      matches your Supabase project's callback URL exactly, and that the provider is enabled in
+      Supabase → Authentication → Providers
 - [ ] Confirm `OPENAI_API_KEY` is unset in your deployment and the AI Scanner still works end-to-end
       via the mock provider (look for the "מצב הדגמה" label in the scan result)
 - [ ] Confirm share buttons work on both a mobile browser (native share sheet or WhatsApp) and
@@ -485,6 +578,15 @@ third-party share sheets) can't be fully exercised in CI:
 
 ## Known limitations / TODOs for future releases
 
+- **Account linking across providers is whatever Supabase's project-level default is.** If someone
+  registers with email/password using `foo@gmail.com` and later tries "Continue with Google" with
+  that same address, Supabase's own account-linking behavior applies (this app doesn't add any
+  custom logic on top) - check your project's Authentication settings if you want to control this
+  explicitly. Not a security issue (RLS/ownership are unaffected either way), just a UX detail worth
+  testing for your specific Supabase project configuration.
+- **Google sign-in provides no city/phone.** The dashboard prompts these users to complete their
+  profile, but there's no hard gate preventing them from browsing with an incomplete one - matching
+  quality and trade contact reveal are degraded (not broken) until they do.
 - **First-signup-becomes-admin is a bootstrap convenience, not a long-term access control model.**
   It only matters for the very first signup on a brand new project - sign up immediately after
   deploying so it's you, not a stranger who finds the URL first. For anything beyond initial setup,
