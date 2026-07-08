@@ -5,11 +5,17 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getStickerNumberToIdMap } from "@/lib/data/stickers";
 import { parseStickerNumbers } from "@/lib/stickerInput";
+import { formatRetrySeconds } from "@/lib/rateLimit";
+import type { Profile } from "@/types/database";
 
 export interface TradeActionState {
   error?: string;
   success?: boolean;
 }
+
+// DB-backed (accurate across serverless instances) rate limit: counts real
+// rows rather than relying on in-process memory.
+const TRADE_REQUEST_LIMIT = { max: 20, windowHours: 1 };
 
 export async function createTradeRequestAction(
   _prevState: TradeActionState,
@@ -28,6 +34,30 @@ export async function createTradeRequestAction(
 
   if (!toUserId || toUserId === user.id) {
     return { error: "בקשת טרייד לא תקינה" };
+  }
+
+  const [{ data: myProfile }, { data: targetProfile }] = await Promise.all([
+    supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
+    supabase.from("profiles").select("*").eq("id", toUserId).maybeSingle(),
+  ]);
+
+  if ((myProfile as Profile | null)?.status === "suspended") {
+    return { error: "החשבון שלך מושהה ולא ניתן לשלוח בקשות טרייד. פנו לתמיכה לפרטים." };
+  }
+  if (!targetProfile || (targetProfile as Profile).status !== "active") {
+    return { error: "לא ניתן לשלוח בקשת טרייד לאספן/ית זה/זו כרגע" };
+  }
+
+  const { count: recentCount } = await supabase
+    .from("trade_requests")
+    .select("id", { count: "exact", head: true })
+    .eq("from_user_id", user.id)
+    .gte("created_at", new Date(Date.now() - TRADE_REQUEST_LIMIT.windowHours * 60 * 60 * 1000).toISOString());
+
+  if ((recentCount ?? 0) >= TRADE_REQUEST_LIMIT.max) {
+    return {
+      error: `שלחת יותר מדי בקשות טרייד (${TRADE_REQUEST_LIMIT.max} בשעה). נסו שוב בעוד ${formatRetrySeconds(3600)}.`,
+    };
   }
 
   const giveNumbers = parseStickerNumbers(giveInput);
@@ -69,36 +99,58 @@ export async function createTradeRequestAction(
   redirect(`/dashboard/trades/${trade.id}`);
 }
 
+function translateTradeError(message: string): string {
+  if (message.includes("only the recipient can accept or decline")) {
+    return "רק מי שקיבל את הבקשה יכול לאשר או לדחות אותה";
+  }
+  if (message.includes("only the sender can cancel")) {
+    return "רק מי ששלח את הבקשה יכול לבטל אותה";
+  }
+  if (message.includes("only a trade participant")) {
+    return "רק צד לעסקה יכול לעדכן אותה";
+  }
+  if (message.includes("suspended") || message.includes("is_active_user")) {
+    return "לא ניתן לבצע פעולה זו כרגע - החשבון מושהה";
+  }
+  if (message.includes("invalid trade status transition")) {
+    return "לא ניתן לבצע את הפעולה במצב הנוכחי של הבקשה";
+  }
+  return message;
+}
+
+// Exported so useActionState (a client hook) can drive these buttons and
+// surface any error - RLS/trigger rejections were previously silently
+// swallowed because these were plain void form actions.
 async function updateTradeStatus(
-  tradeId: string,
+  _prevState: TradeActionState,
+  formData: FormData,
   status: "accepted" | "declined" | "completed" | "cancelled"
 ): Promise<TradeActionState> {
+  const tradeId = String(formData.get("tradeId") ?? "");
+  if (!tradeId) return { error: "בקשת טרייד לא תקינה" };
+
   const supabase = await createClient();
   const { error } = await supabase.from("trade_requests").update({ status }).eq("id", tradeId);
 
-  if (error) return { error: error.message };
+  if (error) return { error: translateTradeError(error.message) };
 
   revalidatePath("/dashboard/trades");
   revalidatePath(`/dashboard/trades/${tradeId}`);
   return { success: true };
 }
 
-export async function acceptTradeAction(formData: FormData): Promise<void> {
-  const tradeId = String(formData.get("tradeId") ?? "");
-  if (tradeId) await updateTradeStatus(tradeId, "accepted");
+export async function acceptTradeAction(prevState: TradeActionState, formData: FormData): Promise<TradeActionState> {
+  return updateTradeStatus(prevState, formData, "accepted");
 }
 
-export async function declineTradeAction(formData: FormData): Promise<void> {
-  const tradeId = String(formData.get("tradeId") ?? "");
-  if (tradeId) await updateTradeStatus(tradeId, "declined");
+export async function declineTradeAction(prevState: TradeActionState, formData: FormData): Promise<TradeActionState> {
+  return updateTradeStatus(prevState, formData, "declined");
 }
 
-export async function completeTradeAction(formData: FormData): Promise<void> {
-  const tradeId = String(formData.get("tradeId") ?? "");
-  if (tradeId) await updateTradeStatus(tradeId, "completed");
+export async function completeTradeAction(prevState: TradeActionState, formData: FormData): Promise<TradeActionState> {
+  return updateTradeStatus(prevState, formData, "completed");
 }
 
-export async function cancelTradeAction(formData: FormData): Promise<void> {
-  const tradeId = String(formData.get("tradeId") ?? "");
-  if (tradeId) await updateTradeStatus(tradeId, "cancelled");
+export async function cancelTradeAction(prevState: TradeActionState, formData: FormData): Promise<TradeActionState> {
+  return updateTradeStatus(prevState, formData, "cancelled");
 }

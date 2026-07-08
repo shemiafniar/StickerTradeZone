@@ -34,17 +34,37 @@ async function logAdminAction(
   await supabase.from("admin_logs").insert({ admin_id: adminId, action, target_user_id: targetUserId, details });
 }
 
-export async function setUserSuspendedAction(formData: FormData): Promise<void> {
-  const { supabase, adminId } = await requireAdmin();
-  const userId = String(formData.get("userId") ?? "");
-  const suspend = formData.get("suspend") === "true";
-  if (!userId) return;
+export interface SuspendUserState {
+  error?: string;
+  success?: boolean;
+}
 
-  await supabase.from("profiles").update({ status: suspend ? "suspended" : "active" }).eq("id", userId);
-  await logAdminAction(supabase, adminId, suspend ? "suspend_user" : "reactivate_user", userId);
+export async function setUserSuspendedAction(
+  _prevState: SuspendUserState,
+  formData: FormData
+): Promise<SuspendUserState> {
+  try {
+    const { supabase, adminId } = await requireAdmin();
+    const userId = String(formData.get("userId") ?? "");
+    const suspend = formData.get("suspend") === "true";
+    if (!userId) return { error: "משתמש לא תקין" };
+    if (userId === adminId) return { error: "לא ניתן להשעות את החשבון שלך" };
 
-  revalidatePath("/admin/users");
-  revalidatePath("/admin");
+    const { error } = await supabase
+      .from("profiles")
+      .update({ status: suspend ? "suspended" : "active" })
+      .eq("id", userId);
+
+    if (error) return { error: error.message };
+
+    await logAdminAction(supabase, adminId, suspend ? "suspend_user" : "reactivate_user", userId);
+
+    revalidatePath("/admin/users");
+    revalidatePath("/admin");
+    return { success: true };
+  } catch {
+    return { error: "פעולה זו מיועדת למנהלים בלבד" };
+  }
 }
 
 export interface UpdateCatalogState {

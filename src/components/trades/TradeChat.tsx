@@ -97,7 +97,7 @@ export function TradeChat({
 
       {disabled ? (
         <p className="border-t border-black/5 px-4 py-3 text-center text-xs text-foreground/40">
-          לא ניתן לשלוח הודעות בבקשה שבוטלה/נדחתה
+          לא ניתן לשלוח הודעות כרגע
         </p>
       ) : (
         <form ref={formRef} action={formAction} className="flex items-end gap-2 border-t border-black/5 p-2.5">

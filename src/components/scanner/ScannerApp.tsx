@@ -36,6 +36,7 @@ export function ScannerApp() {
   const [manualNumber, setManualNumber] = useState("");
   const [listingType, setListingType] = useState("trade");
   const [saveState, setSaveState] = useState<{ error?: string; success?: string } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [isSaving, startSaving] = useTransition();
 
   const [dupState, dupFormAction, dupPending] = useActionState(scanDuplicatesAction, scanInitialState);
@@ -86,6 +87,7 @@ export function ScannerApp() {
     setFile(null);
     setRows([]);
     setSaveState(null);
+    setUploadError(null);
   }
 
   function updateRow(id: string, patch: Partial<ReviewRow>) {
@@ -174,11 +176,21 @@ export function ScannerApp() {
           onSubmit={(e) => {
             if (!file) {
               e.preventDefault();
-              setSaveState({ error: "נא לבחור תמונה קודם" });
+              setUploadError("נא לבחור תמונה קודם");
             }
           }}
         >
-          <ImageDropzone onFileSelected={setFile} disabled={scanPending} />
+          <ImageDropzone
+            onFileSelected={(f) => {
+              setUploadError(null);
+              setFile(f);
+            }}
+            onError={(message) => {
+              setUploadError(message);
+              setFile(null);
+            }}
+            disabled={scanPending}
+          />
           {file && <input type="file" name="image" hidden ref={(el) => setFileOnInput(el, file)} />}
 
           <Button type="submit" disabled={!file || scanPending} className="mt-4 w-full">
@@ -186,6 +198,7 @@ export function ScannerApp() {
           </Button>
         </form>
 
+        <ErrorMessage message={uploadError ?? undefined} />
         <ErrorMessage message={scanState.error} />
 
         {scanState.providerName && (

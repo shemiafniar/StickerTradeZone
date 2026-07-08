@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { setUserSuspendedAction } from "@/lib/actions/admin";
+import { SuspendUserButton } from "@/components/admin/SuspendUserButton";
 
 export const metadata = { title: "ניהול משתמשים | Sticker Trade IL" };
 
@@ -52,13 +52,7 @@ export default async function AdminUsersPage({
               </div>
 
               {user.role !== "admin" && (
-                <form action={setUserSuspendedAction}>
-                  <input type="hidden" name="userId" value={user.id} />
-                  <input type="hidden" name="suspend" value={String(user.status !== "suspended")} />
-                  <Button type="submit" variant={user.status === "suspended" ? "outline" : "danger"} size="sm">
-                    {user.status === "suspended" ? "ביטול השעיה" : "השעיית משתמש"}
-                  </Button>
-                </form>
+                <SuspendUserButton userId={user.id} suspended={user.status === "suspended"} />
               )}
             </div>
           </Card>

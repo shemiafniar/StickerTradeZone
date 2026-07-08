@@ -3,11 +3,16 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ISRAEL_CITIES } from "@/lib/cities";
+import { checkRateLimit, formatRetrySeconds } from "@/lib/rateLimit";
+import { getClientIp } from "@/lib/requestInfo";
 
 export interface AuthActionState {
   error?: string;
   message?: string;
 }
+
+const SIGNUP_LIMIT = { attempts: 6, windowMs: 60 * 60 * 1000 }; // 6 signups/hour/IP
+const SIGNIN_LIMIT = { attempts: 10, windowMs: 5 * 60 * 1000 }; // 10 attempts/5min/IP+email
 
 function normalizeIsraeliPhone(raw: string): string {
   return raw.replace(/[^\d+]/g, "");
@@ -34,6 +39,14 @@ export async function signUpAction(
 
   if (!ISRAEL_CITIES.includes(city)) {
     return { error: "נא לבחור עיר מהרשימה" };
+  }
+
+  const ip = await getClientIp();
+  const rateLimit = checkRateLimit(`signup:${ip}`, SIGNUP_LIMIT.attempts, SIGNUP_LIMIT.windowMs);
+  if (!rateLimit.allowed) {
+    return {
+      error: `יותר מדי ניסיונות הרשמה. נסו שוב בעוד ${formatRetrySeconds(rateLimit.retryAfterSeconds ?? 60)}.`,
+    };
   }
 
   const supabase = await createClient();
@@ -70,6 +83,14 @@ export async function signInAction(
     return { error: "נא למלא אימייל וסיסמה" };
   }
 
+  const ip = await getClientIp();
+  const rateLimit = checkRateLimit(`signin:${ip}:${email.toLowerCase()}`, SIGNIN_LIMIT.attempts, SIGNIN_LIMIT.windowMs);
+  if (!rateLimit.allowed) {
+    return {
+      error: `יותר מדי ניסיונות התחברות. נסו שוב בעוד ${formatRetrySeconds(rateLimit.retryAfterSeconds ?? 60)}.`,
+    };
+  }
+
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
 
@@ -92,5 +113,9 @@ function translateAuthError(message: string): string {
     "User already registered": "המשתמש כבר רשום במערכת, נסה/י להתחבר",
     "Email not confirmed": "יש לאשר את כתובת המייל לפני ההתחברות",
   };
-  return map[message] ?? message;
+  if (map[message]) return map[message];
+  if (/rate limit|too many/i.test(message)) {
+    return "יותר מדי ניסיונות. נסו שוב בעוד כמה דקות.";
+  }
+  return message;
 }
