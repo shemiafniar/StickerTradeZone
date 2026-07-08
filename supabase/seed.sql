@@ -161,40 +161,40 @@ on conflict (user_id, sticker_id) do nothing;
 -- אלי (ירושלים): has ISR 1-5 spare, missing ISR 6-12
 insert into public.user_stickers (user_id, sticker_id, status, listing_type)
 select '11111111-1111-1111-1111-111111111107', id, 'duplicate', 'trade'
-from public.stickers where team_code = 'ISR' and number between 1 and 5
+from public.stickers where team_code = 'JPN' and number between 1 and 5
 on conflict (user_id, sticker_id) do nothing;
 
 insert into public.user_stickers (user_id, sticker_id, status)
 select '11111111-1111-1111-1111-111111111107', id, 'missing'
-from public.stickers where team_code = 'ISR' and number between 6 and 12
+from public.stickers where team_code = 'JPN' and number between 6 and 12
 on conflict (user_id, sticker_id) do nothing;
 
 -- מאיה (באר שבע): has ISR 6-12 spare, missing ISR 1-5
 insert into public.user_stickers (user_id, sticker_id, status, listing_type)
 select '11111111-1111-1111-1111-111111111108', id, 'duplicate', 'both'
-from public.stickers where team_code = 'ISR' and number between 6 and 12
+from public.stickers where team_code = 'JPN' and number between 6 and 12
 on conflict (user_id, sticker_id) do nothing;
 
 insert into public.user_stickers (user_id, sticker_id, status)
 select '11111111-1111-1111-1111-111111111108', id, 'missing'
-from public.stickers where team_code = 'ISR' and number between 1 and 5
+from public.stickers where team_code = 'JPN' and number between 1 and 5
 on conflict (user_id, sticker_id) do nothing;
 
 -- רועי (אשדוד) & גלי (פתח תקווה): light data, mostly missing
 insert into public.user_stickers (user_id, sticker_id, status)
 select '11111111-1111-1111-1111-111111111109', id, 'missing'
-from public.stickers where team_code = 'ISR' and number between 1 and 20
+from public.stickers where team_code = 'JPN' and number between 1 and 20
 on conflict (user_id, sticker_id) do nothing;
 
 insert into public.user_stickers (user_id, sticker_id, status, listing_type)
 select '11111111-1111-1111-1111-111111111110', id, 'duplicate', 'trade'
-from public.stickers where team_code = 'ISR' and number between 1 and 8
+from public.stickers where team_code = 'JPN' and number between 1 and 8
 on conflict (user_id, sticker_id) do nothing;
 
 -- A couple of "have" (owned, not-for-trade) stickers, to demo the green state too.
 insert into public.user_stickers (user_id, sticker_id, status)
 select '11111111-1111-1111-1111-111111111102', id, 'have'
-from public.stickers where team_code = 'ISR' and number between 1 and 10
+from public.stickers where team_code = 'JPN' and number between 1 and 10
 on conflict (user_id, sticker_id) do nothing;
 
 -- Give a couple of "for sale" duplicates a price + note, to demo the marketplace fields.
@@ -206,7 +206,7 @@ where user_id = '11111111-1111-1111-1111-111111111105' and listing_type = 'both'
 update public.user_stickers
 set price = 3
 where user_id = '11111111-1111-1111-1111-111111111108' and listing_type = 'both'
-  and sticker_id = (select id from public.stickers where team_code = 'ISR' and number = 10);
+  and sticker_id = (select id from public.stickers where team_code = 'JPN' and number = 10);
 
 -- ---------------------------------------------------------------------
 -- 3) Approximate demo locations, so distance-based matching has data to show.
