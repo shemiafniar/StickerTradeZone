@@ -8,8 +8,10 @@ trade or sell with.
 > community-built collector trade zone. See the footer disclaimer shown on every page.
 
 This README covers the public **Beta** release. The original MVP is preserved in git history / PR
-#1, and the initial Beta feature set in PR #2; this revision adds a QA/security/production-hardening
-pass (PR #3) with no new product features.
+#1, the initial Beta feature set in PR #2, a QA/security/production-hardening pass in PR #3, and this
+revision (PR #4) closes the remaining gaps in the **production bootstrap** so a fresh Supabase
+project + Vercel deployment works end-to-end with zero manual SQL or database edits after deploying
+- see [Zero-touch production bootstrap](#zero-touch-production-bootstrap) below.
 
 ## Tech stack
 
@@ -58,6 +60,8 @@ pass (PR #3) with no new product features.
 ```
 src/
   app/                     Next.js App Router pages (landing, auth, dashboard, admin)
+    auth/callback/route.ts  PKCE code-exchange endpoint (email confirmation, OAuth, magic links)
+    auth/confirm/route.ts   token_hash fallback endpoint (older-style email templates)
   components/
     ui/                    Shared primitives (Button, Card, Field, Skeleton, ...)
     auth/ stickers/ matches/ trades/ admin/ profile/  Feature UI
@@ -85,6 +89,7 @@ supabase/
   migrations/0005_notifications.sql  notifications table, RLS, trigger-based notification creation
   migrations/0006_marketplace.sql    listing_type/price/note on user_duplicates
   migrations/0007_hardening.sql      Suspended-user write enforcement, scan_events rate-limit table
+  migrations/0008_bootstrap.sql      First-signup-becomes-admin, zero-touch production bootstrap
   seed.sql                           Local-dev-only seed data (catalog + demo users + trades + chat)
 ```
 
@@ -94,6 +99,38 @@ Postgres RLS is row-level, not column-level. To guarantee phone numbers are *onl
 the owner, an admin, or a confirmed trade partner - even if the app code has a bug - contact details
 live in their own `profile_contacts` table with a strict RLS policy, completely separate from the
 publicly-browsable `profiles` table (name/city/neighborhood) used for matching and the marketplace.
+
+### Zero-touch production bootstrap
+
+A fresh Supabase project + a fresh Vercel deployment should work end-to-end - register, confirm
+email, log in, see the dashboard, use the admin panel - without anyone ever opening the SQL editor
+to hand-write a fix. Four things make that true:
+
+1. **Profile creation is defense-in-depth, not single-point-of-failure.** The primary path is the
+   `handle_new_user()` trigger on `auth.users` (in `0001_schema.sql`, refined in `0008_bootstrap.sql`),
+   which fires the instant someone signs up and creates their `profiles` + `profile_contacts` rows in
+   the same transaction. As a fallback, `getCurrentProfile()`/`getCurrentContact()`
+   (`src/lib/data/profile.ts`) self-heal: if a profile is ever missing for an authenticated user for
+   any reason, they're created on the spot (`ON CONFLICT DO NOTHING`, so this is always safe to run
+   even if the trigger already did its job). This is what guarantees the dashboard loads immediately
+   after first login instead of a "profile not found" redirect loop.
+2. **The first person to ever sign up becomes an admin automatically** (`0008_bootstrap.sql`). A
+   brand new project has no data, so - by construction - the first signup is whoever is deploying and
+   testing the app. Every signup after that gets the normal `user` role. This removes the only step
+   in the whole app that previously required a manual SQL `UPDATE` just to get started. (If you need
+   to promote someone else later, that's a normal, occasional admin-management action, still a `UPDATE`
+   statement - see [Getting started](#getting-started) below - not a deployment blocker.)
+3. **Email confirmation actually completes the sign-in.** `app/auth/callback/route.ts` exchanges the
+   PKCE `code` Supabase appends to the confirmation link for a real session (this is what
+   `signUpAction` requests via `emailRedirectTo`), and `app/auth/confirm/route.ts` is a fallback for
+   projects whose email template uses the older `token_hash` style. Neither requires editing the
+   Supabase email templates - both work with the default "Confirm signup" template out of the box.
+4. **Clear, actionable failures instead of silent breakage.** `getSupabaseEnv()`
+   (`src/lib/supabase/env.ts`) throws an explicit "you forgot to set NEXT_PUBLIC_SUPABASE_URL/..."
+   error instead of the cryptic `supabaseUrl is required` from the underlying library. `getSiteUrl()`
+   (`src/lib/site.ts`) derives the app's public URL from the request's forwarded host when
+   `NEXT_PUBLIC_SITE_URL` isn't set, so auth redirects still go to the right domain on a first deploy
+   even if that env var is forgotten.
 
 ### Location privacy
 
@@ -185,14 +222,16 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 5. `supabase/migrations/0005_notifications.sql`
 6. `supabase/migrations/0006_marketplace.sql`
 7. `supabase/migrations/0007_hardening.sql`
+8. `supabase/migrations/0008_bootstrap.sql`
 
-All 7 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 8 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
-description for details.
+description for details. **This is the only SQL you should ever need to run** - no follow-up manual
+inserts/updates are required, including for your first admin account (see step 4).
 
-> If you already ran migrations 0001-0006 for an earlier release, you only need to additionally run
-> 0007 - it's a pure hardening pass (tightens existing policies/triggers, adds one small
-> `scan_events` table) and is safe to apply on top.
+> If you already ran an earlier subset of these migrations for a previous release, you only need to
+> additionally run whichever ones you're missing - each is a pure addition/alteration and safe to
+> apply on top of the previous ones.
 
 ### 3. Enable Realtime (hosted Supabase projects)
 
@@ -202,7 +241,21 @@ manual step needed. If you're running a bare/self-hosted Postgres without that p
 and the notification bell still work via normal queries + Server Actions; they just won't update
 live without a page refresh.
 
-### 4. (Optional) Seed demo data for local testing
+### 4. Configure Auth URLs (required, one-time, dashboard only - not SQL)
+
+In your Supabase project dashboard → **Authentication → URL Configuration**:
+
+- Set **Site URL** to your app's URL (`http://localhost:3000` for local dev, your Vercel URL in
+  production).
+- Add the same URL (and `http://localhost:3000` for local testing against a hosted project) to
+  **Redirect URLs**.
+
+This is standard, unavoidable Supabase Auth configuration (the same as any app using hosted auth) -
+it's a dashboard setting, not a SQL/database edit, and only needs to be done once per project. Without
+it, email confirmation links and OAuth/magic-link redirects will be rejected by Supabase regardless of
+anything in this app's code.
+
+### 5. (Optional) Seed demo data for local testing
 
 `supabase/seed.sql` is **for local development only** - it inserts directly into `auth.users` /
 `auth.identities`, which only works against a local Supabase stack (`supabase start` /
@@ -228,14 +281,16 @@ generate:
 | roi@stickertrade.local | user | אשדוד | – |
 | gali@stickertrade.local | user | פתח תקווה | – |
 
-On a **hosted** Supabase project, instead: sign up normally through the app UI, then promote a user
-to admin with:
+On a **hosted** Supabase project, don't run this file. Instead, just sign up normally through the app
+UI - **the very first account created on a fresh project is automatically made an admin** (see
+[Zero-touch production bootstrap](#zero-touch-production-bootstrap) above), so there's nothing extra
+to do. If you later want to promote an *additional* admin, that's a normal admin-management action:
 
 ```sql
 update public.profiles set role = 'admin' where id = '<the user''s auth.users id>';
 ```
 
-### 5. Configure environment variables
+### 6. Configure environment variables
 
 ```bash
 cp .env.example .env.local
@@ -244,25 +299,32 @@ cp .env.example .env.local
 Required:
 
 - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` - from your Supabase project's
-  **Settings → API** page.
+  **Settings → API** page. Missing either of these throws a clear startup error naming exactly which
+  one to set, instead of a cryptic library error.
+
+Recommended:
+
+- `NEXT_PUBLIC_SITE_URL` - your deployed domain, used for share links and as the base for the auth
+  email confirmation redirect. If you skip this, the app derives it from the incoming request's host
+  header instead (so it still works on a fresh Vercel deploy), but setting it explicitly is safer if
+  you have multiple domains/preview URLs pointing at the same Supabase project.
 
 Optional:
 
-- `NEXT_PUBLIC_SITE_URL` - your deployed domain, used for share links. Defaults to
-  `http://localhost:3000` in dev.
 - `OPENAI_API_KEY` / `OPENAI_VISION_MODEL` - enables real AI detection in the Sticker Scanner. Leave
   unset to use the built-in mock provider (fully functional, no external calls).
 
-### 6. Install dependencies & run
+### 7. Install dependencies & run
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). Register the first account - it will
+automatically be an admin.
 
-### 7. Set an initial sticker catalog (as an admin)
+### 8. Set an initial sticker catalog (as an admin)
 
 Log in as an admin and go to **אזור ניהול → קטלוג מדבקות** to set the total number of stickers in
 the set (this auto-generates numbered catalog rows `1..N`) and/or paste in a custom list
@@ -271,26 +333,41 @@ generic numbered stickers without full player/team data).
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 7 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 8 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`). Do **not** run `seed.sql` against it (it has a built-in guard that
    refuses to run if it detects any non-demo account already exists, but the safest rule is simply:
    don't run it against a hosted project at all).
-2. **Vercel**: import this repo, framework preset "Next.js" (auto-detected). Add the environment
+2. **Supabase Auth URLs**: in **Authentication → URL Configuration**, set the Site URL to your
+   Vercel URL and add it to the Redirect URLs allow-list (see "Configure Auth URLs" in
+   [Getting started](#getting-started) above). Required for email confirmation to work.
+3. **Vercel**: import this repo, framework preset "Next.js" (auto-detected). Add the environment
    variables from `.env.example` in Project Settings → Environment Variables:
    - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (from Supabase → Settings → API)
-   - `NEXT_PUBLIC_SITE_URL` set to your production URL (e.g. `https://your-app.vercel.app`)
+   - `NEXT_PUBLIC_SITE_URL` set to your production URL (e.g. `https://your-app.vercel.app`) - not
+     strictly required (see "Recommended" above) but avoids any ambiguity across preview deployments
    - `OPENAI_API_KEY` (optional, enables real AI Scanner detection)
-3. In Supabase → **Authentication → URL Configuration**, set the Site URL and add your Vercel URL
-   to the redirect allow-list so email confirmation links work.
 4. Deploy. No build-time secrets or server infra beyond Supabase + Vercel are required - there's no
    custom server, cron job, or queue in this Beta.
-5. Promote your own account to admin (see the SQL snippet above) once you've signed up.
+5. Sign up through the live app. **You're automatically an admin** - nothing else to configure. Go to
+   **אזור ניהול → קטלוג מדבקות** to set your sticker catalog size.
 
-### Production checklist (verified during the QA/hardening pass)
+That's the entire deployment - no SQL editor visits after step 1, no manual profile/role edits, ever.
+
+### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 7 migrations + `seed.sql` re-applied from a completely empty Postgres database twice in a
-  row (idempotency check) with zero errors.
+- ✅ All 8 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+  times, including a full clean-room run for this pass) with zero errors.
+- ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
+  Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
+  succeeds under RLS exactly as it would in the running app - this is what prevents the
+  login-succeeds-but-dashboard-never-loads failure mode.
+- ✅ Simulated the first-signup-becomes-admin bootstrap end-to-end: first `auth.users` insert on a
+  fresh database → `profiles.role = 'admin'`; second insert → `profiles.role = 'user'`.
+- ✅ `/auth/callback` and `/auth/confirm` verified via the dev server: with no `code`/`token_hash`
+  present they redirect to `/login?error=confirmation_failed`, which renders a clear Hebrew message
+  (the success path requires a real Supabase project's email link and can't be exercised in this
+  sandbox - see the manual QA checklist).
 - ✅ Auth flow (register/login/logout) exercised via the dev server; protected `/dashboard` and
   `/admin` routes correctly 307-redirect unauthenticated requests via `src/proxy.ts`; custom
   `not-found.tsx`/`error.tsx`/`global-error.tsx` pages verified.
@@ -300,6 +377,8 @@ generic numbered stickers without full player/team data).
   enforcement, and contact-reveal rules.
 - ✅ `getVisionProvider()` confirmed (by unit test and code review) to select the mock provider
   whenever `OPENAI_API_KEY` is unset/empty, and the real provider only when it's set.
+- ✅ `getSupabaseEnv()` confirmed (by unit test) to throw a clear, actionable error naming the exact
+  missing env var instead of the underlying library's cryptic default message.
 
 ## Available scripts
 
@@ -338,6 +417,9 @@ npm test        # Vitest unit tests (matching, sticker input parsing, distance, 
   limiting & abuse prevention" above.
 - File uploads to the AI Scanner are validated (type allow-list + 8MB size cap) both client- and
   server-side before ever reaching the Vision provider.
+- Profile/contact self-healing (see "Zero-touch production bootstrap" above) only ever creates a row
+  for the currently-authenticated user's own `auth.uid()` - it cannot be used to create or overwrite
+  another user's data, and never overwrites an existing row (`ON CONFLICT DO NOTHING`).
 
 ## Manual QA checklist (pre-launch)
 
@@ -348,9 +430,11 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] Register a new account (email/password); confirm the profile + contact rows are created
-      automatically and you land on the dashboard (or see the "check your email" message if
-      confirmations are enabled)
+- [ ] On a brand new Supabase project (only the 8 migrations run, no seed, no manual SQL), register
+      the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
+- [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
+      confirmation link in the email, and confirm it redirects straight into the dashboard already
+      logged in (not back to the login page)
 - [ ] Add duplicates manually via the bulk input (single numbers, a range, and a mix)
 - [ ] Add missing stickers manually the same way
 - [ ] Run the AI Scanner in both modes (duplicate photo, album page photo) using the mock provider;
@@ -388,8 +472,10 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 7 migrations in order, confirm no errors, do **not** run
-      `seed.sql`
+- [ ] Fresh Supabase project: run all 8 migrations in order, confirm no errors, do **not** run
+      `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
+      getting your first admin)
+- [ ] Confirm the Auth URL Configuration (Site URL + Redirect URLs) is set for your deployed domain
 - [ ] Confirm `OPENAI_API_KEY` is unset in your deployment and the AI Scanner still works end-to-end
       via the mock provider (look for the "מצב הדגמה" label in the scan result)
 - [ ] Confirm share buttons work on both a mobile browser (native share sheet or WhatsApp) and
@@ -399,6 +485,11 @@ third-party share sheets) can't be fully exercised in CI:
 
 ## Known limitations / TODOs for future releases
 
+- **First-signup-becomes-admin is a bootstrap convenience, not a long-term access control model.**
+  It only matters for the very first signup on a brand new project - sign up immediately after
+  deploying so it's you, not a stranger who finds the URL first. For anything beyond initial setup,
+  promote additional admins via the documented SQL snippet (or build a proper admin-invite flow as a
+  future enhancement).
 - **Notifications for new nearby matches** were intentionally left out of this Beta (the spec
   marked this optional "if efficient"); computing it reactively for every profile/sticker change
   would need a batched/debounced job rather than a per-row trigger. A natural next step is a
