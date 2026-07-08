@@ -9,7 +9,7 @@ import { TradeStatusBadge } from "@/components/ui/Badge";
 import { ShareCard } from "@/components/share/ShareCard";
 import Link from "next/link";
 
-export const metadata = { title: "לוח בקרה | Sticker Trade IL" };
+export const metadata = { title: "לוח בקרה | Shashot" };
 
 export default async function DashboardPage() {
   const profile = await getCurrentProfile();
@@ -60,8 +60,8 @@ export default async function DashboardPage() {
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <SummaryCard icon="📋" label="מדבקות שחסרות לי" value={counts.missing} href="/dashboard/stickers?tab=missing" accent="orange" />
-        <SummaryCard icon="🔁" label="מדבקות כפולות" value={counts.duplicates} href="/dashboard/stickers?tab=duplicates" accent="green" />
+        <SummaryCard icon="📋" label="מדבקות שחסרות לי" value={counts.missing} href="/dashboard/stickers" accent="orange" />
+        <SummaryCard icon="🔁" label="מדבקות כפולות" value={counts.duplicates} href="/dashboard/stickers/marketplace" accent="green" />
         <SummaryCard icon="📍" label="התאמות קרובות" value={matches.length} href="/dashboard/matches" accent="blue" />
       </div>
 

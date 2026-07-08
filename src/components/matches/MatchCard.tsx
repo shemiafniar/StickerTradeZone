@@ -3,12 +3,12 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { LOCATION_RANK_LABEL } from "@/lib/cities";
 import { formatDistanceHebrew } from "@/lib/distance";
-import { formatStickerNumbersAsRanges } from "@/lib/stickerInput";
+import { formatStickerCodesByTeam, serializeStickerCodes } from "@/lib/stickerCodes";
 import type { MatchResult } from "@/lib/matching";
 
 export function MatchCard({ match }: { match: MatchResult }) {
-  const giveParam = encodeURIComponent(formatStickerNumbersAsRanges(match.theyNeedThatIHave));
-  const receiveParam = encodeURIComponent(formatStickerNumbersAsRanges(match.theyHaveThatINeed));
+  const giveParam = encodeURIComponent(serializeStickerCodes(match.theyNeedThatIHave));
+  const receiveParam = encodeURIComponent(serializeStickerCodes(match.theyHaveThatINeed));
 
   return (
     <Card>
@@ -33,15 +33,21 @@ export function MatchCard({ match }: { match: MatchResult }) {
         <div className="rounded-xl bg-green-50 p-3">
           <p className="text-xs font-bold text-green-700">תקבל ממנו/ה</p>
           <p className="text-2xl font-extrabold text-green-800">{match.theyHaveThatINeed.length}</p>
-          <p className="mt-1 text-xs text-green-700/70 truncate" title={formatStickerNumbersAsRanges(match.theyHaveThatINeed)}>
-            {formatStickerNumbersAsRanges(match.theyHaveThatINeed) || "-"}
+          <p
+            className="mt-1 truncate text-xs text-green-700/70"
+            title={formatStickerCodesByTeam(match.theyHaveThatINeed)}
+          >
+            {formatStickerCodesByTeam(match.theyHaveThatINeed) || "-"}
           </p>
         </div>
         <div className="rounded-xl bg-blue-50 p-3">
           <p className="text-xs font-bold text-blue-700">תיתן לו/ה</p>
           <p className="text-2xl font-extrabold text-blue-800">{match.theyNeedThatIHave.length}</p>
-          <p className="mt-1 text-xs text-blue-700/70 truncate" title={formatStickerNumbersAsRanges(match.theyNeedThatIHave)}>
-            {formatStickerNumbersAsRanges(match.theyNeedThatIHave) || "-"}
+          <p
+            className="mt-1 truncate text-xs text-blue-700/70"
+            title={formatStickerCodesByTeam(match.theyNeedThatIHave)}
+          >
+            {formatStickerCodesByTeam(match.theyNeedThatIHave) || "-"}
           </p>
         </div>
       </div>

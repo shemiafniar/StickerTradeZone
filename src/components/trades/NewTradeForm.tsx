@@ -26,12 +26,26 @@ export function NewTradeForm({
 
       <FieldGroup>
         <Label htmlFor="receive">מדבקות שתקבל/י ממנו/ה</Label>
-        <Input id="receive" name="receive" defaultValue={defaultReceive} placeholder="1-5, 12" dir="ltr" className="text-right" />
+        <Input
+          id="receive"
+          name="receive"
+          defaultValue={defaultReceive.replaceAll(",", ", ")}
+          placeholder="GER-2, FRA-17"
+          dir="ltr"
+          className="text-right"
+        />
       </FieldGroup>
 
       <FieldGroup>
         <Label htmlFor="give">מדבקות שתיתן/י לו/ה</Label>
-        <Input id="give" name="give" defaultValue={defaultGive} placeholder="8, 20-22" dir="ltr" className="text-right" />
+        <Input
+          id="give"
+          name="give"
+          defaultValue={defaultGive.replaceAll(",", ", ")}
+          placeholder="POR-5, COL-19"
+          dir="ltr"
+          className="text-right"
+        />
       </FieldGroup>
 
       <FieldGroup>
