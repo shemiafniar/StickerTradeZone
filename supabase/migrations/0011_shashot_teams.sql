@@ -132,9 +132,21 @@ where t.team_index = floor((s.number - 1) / 20)::int
 -- Legacy numbers beyond the seeded teams' range (team_count * 20) have no
 -- valid mapping - remove them and anything referencing them. This is a
 -- no-op unless a project's catalog was configured larger than 640.
+-- user_duplicates/user_missing are guarded with an existence check so this
+-- migration can be re-run safely after they've already been dropped further
+-- down (e.g. re-running the whole file after a first successful run).
 delete from public.trade_request_items where sticker_id in (select id from public.stickers where team_code is null);
-delete from public.user_duplicates where sticker_id in (select id from public.stickers where team_code is null);
-delete from public.user_missing where sticker_id in (select id from public.stickers where team_code is null);
+
+do $$
+begin
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'user_duplicates') then
+    delete from public.user_duplicates where sticker_id in (select id from public.stickers where team_code is null);
+  end if;
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'user_missing') then
+    delete from public.user_missing where sticker_id in (select id from public.stickers where team_code is null);
+  end if;
+end $$;
+
 delete from public.stickers where team_code is null;
 
 alter table public.stickers alter column team_code set not null;
@@ -223,16 +235,81 @@ create policy user_stickers_delete_owner
 -- Migrate existing data. Duplicates take priority over missing if (in the
 -- old model, which had no constraint preventing it) a user somehow had both
 -- rows for the same sticker.
-insert into public.user_stickers (user_id, sticker_id, status, listing_type, price, note, created_at)
-select user_id, sticker_id, 'duplicate', listing_type, price, note, created_at
-from public.user_duplicates
-on conflict (user_id, sticker_id) do update
-  set status = 'duplicate', listing_type = excluded.listing_type, price = excluded.price, note = excluded.note;
+--
+-- IMPORTANT: this must not assume user_duplicates already has
+-- `listing_type`/`price` (added by 0006_marketplace.sql) - a project whose
+-- migration history stalled before 0006 was ever applied still has the
+-- *original* 0001_schema.sql shape (a `for_sale boolean` column, no
+-- `listing_type`/`price` at all). A static `select ... listing_type, price
+-- ... from user_duplicates` against that shape fails with "column
+-- listing_type does not exist" - and critically, since `listing_type` *is*
+-- a real column on the just-created `user_stickers` target table, Postgres's
+-- own error hinting reports it as "There is a column named listing_type in
+-- table user_stickers, but it cannot be referenced from this part of the
+-- query", which can look confusingly like a bug in this migration rather
+-- than a mismatched source table. The three branches below cover every
+-- shape user_duplicates can actually be in.
+do $$
+declare
+  v_has_listing_type boolean;
+  v_has_for_sale boolean;
+begin
+  if not exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'user_duplicates'
+  ) then
+    -- Already migrated and dropped by an earlier successful run of this
+    -- migration - nothing left to do.
+    null;
+  else
+    select exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'user_duplicates' and column_name = 'listing_type'
+    ) into v_has_listing_type;
 
-insert into public.user_stickers (user_id, sticker_id, status, created_at)
-select user_id, sticker_id, 'missing', created_at
-from public.user_missing
-on conflict (user_id, sticker_id) do nothing;
+    select exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'user_duplicates' and column_name = 'for_sale'
+    ) into v_has_for_sale;
+
+    if v_has_listing_type then
+      -- 0006_marketplace.sql already ran: listing_type/price/note exist as-is.
+      insert into public.user_stickers (user_id, sticker_id, status, listing_type, price, note, created_at)
+      select user_id, sticker_id, 'duplicate', listing_type, price, note, created_at
+      from public.user_duplicates
+      on conflict (user_id, sticker_id) do update
+        set status = 'duplicate', listing_type = excluded.listing_type, price = excluded.price, note = excluded.note;
+    elsif v_has_for_sale then
+      -- 0006_marketplace.sql never ran: derive listing_type from the legacy
+      -- `for_sale` boolean exactly as 0006 itself would have (true -> 'both',
+      -- false -> 'trade'); there is no price column yet in this shape.
+      insert into public.user_stickers (user_id, sticker_id, status, listing_type, note, created_at)
+      select user_id, sticker_id, 'duplicate', case when for_sale then 'both' else 'trade' end, note, created_at
+      from public.user_duplicates
+      on conflict (user_id, sticker_id) do update
+        set status = 'duplicate', listing_type = excluded.listing_type, note = excluded.note;
+    else
+      -- Neither column present - shouldn't happen given 0001_schema.sql
+      -- always creates `for_sale`, but handled defensively rather than
+      -- failing the whole migration.
+      insert into public.user_stickers (user_id, sticker_id, status, listing_type, note, created_at)
+      select user_id, sticker_id, 'duplicate', 'trade', note, created_at
+      from public.user_duplicates
+      on conflict (user_id, sticker_id) do update
+        set status = 'duplicate';
+    end if;
+  end if;
+
+  if exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'user_missing'
+  ) then
+    insert into public.user_stickers (user_id, sticker_id, status, created_at)
+    select user_id, sticker_id, 'missing', created_at
+    from public.user_missing
+    on conflict (user_id, sticker_id) do nothing;
+  end if;
+end $$;
 
 drop table if exists public.user_duplicates cascade;
 drop table if exists public.user_missing cascade;
@@ -300,7 +377,18 @@ where id = true;
 --    backs, showing "TEAMCODE number" in a corner) instead of the old
 --    duplicates/album distinction - widen the check constraint to allow it
 --    while keeping old rows (if any) valid for audit history.
+--
+--    `scan_events` is created by 0007_hardening.sql - guarded with
+--    `IF EXISTS` in case a project's migration history stalled before that
+--    one ever ran (this table is purely a rate-limit/audit log, not
+--    required for anything else in this migration).
 -- =========================================================================
-alter table public.scan_events drop constraint if exists scan_events_mode_check;
-alter table public.scan_events add constraint scan_events_mode_check
-  check (mode in ('duplicates', 'album', 'sticker_backs'));
+alter table if exists public.scan_events drop constraint if exists scan_events_mode_check;
+
+do $$
+begin
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'scan_events') then
+    alter table public.scan_events add constraint scan_events_mode_check
+      check (mode in ('duplicates', 'album', 'sticker_backs'));
+  end if;
+end $$;

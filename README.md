@@ -169,6 +169,25 @@ existing projects:
    marketplace price/note fields), ran the migration, and confirmed every row landed on the
    expected new `code`, with `trade_request_items` foreign keys intact and marketplace fields
    preserved - byte-for-byte matching a hand-computed expected mapping.
+5. **It does not assume every prior migration in this repo's history actually ran** - a real
+   production project hit this exactly: `0006_marketplace.sql` (which adds `listing_type`/`price` to
+   `user_duplicates`) had never been applied there, so `user_duplicates` still had the *original*
+   `0001_schema.sql` shape (a `for_sale boolean`, no `listing_type`). A first version of `0011` wrote a
+   static `select ... listing_type, price ... from user_duplicates`, which failed with `column
+   "listing_type" does not exist` - confusingly reported by Postgres as "There is a column named
+   listing_type in table user_stickers [the migration's own new target table], but it cannot be
+   referenced from this part of the query", since `listing_type` genuinely exists elsewhere in the
+   same statement, just not on the table actually being selected from. The migration now checks
+   `information_schema.columns` at runtime and branches: migrate `listing_type`/`price` directly if
+   present, derive `listing_type` from the legacy `for_sale` boolean if not (exactly like `0006` itself
+   would have), or default to `'trade'` if neither exists. The same defensive-existence-check pattern
+   guards the `scan_events` table (added by `0007_hardening.sql`, also not guaranteed to exist) and the
+   legacy-cleanup `delete from user_duplicates/user_missing` statements (guarded so the *entire*
+   migration can be re-run safely even after a previous run already dropped those tables). Verified
+   against three distinct schema states locally: a fresh database, one stalled at `0005` (no
+   `listing_type`, no `scan_events` - reproducing the exact reported error first, then confirming the
+   fix), and one stalled at `0006` (`listing_type` present, `scan_events` absent) - plus re-running the
+   full migration a second time against the now-migrated database to confirm idempotency.
 
 ### Why a `profiles` / `profile_contacts` split?
 
