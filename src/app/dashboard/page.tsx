@@ -1,4 +1,4 @@
-import { getCurrentProfile } from "@/lib/data/profile";
+import { getCurrentContact, getCurrentProfile } from "@/lib/data/profile";
 import { getCollectionCounts } from "@/lib/data/collection";
 import { getMatchesForCurrentUser } from "@/lib/data/matches";
 import { getTradeRequestsForCurrentUser } from "@/lib/data/trades";
@@ -6,6 +6,7 @@ import { SummaryCard } from "@/components/SummaryCard";
 import { Card } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import { TradeStatusBadge } from "@/components/ui/Badge";
+import { ShareCard } from "@/components/share/ShareCard";
 import Link from "next/link";
 
 export const metadata = { title: "לוח בקרה | Sticker Trade IL" };
@@ -14,14 +15,20 @@ export default async function DashboardPage() {
   const profile = await getCurrentProfile();
   if (!profile) return null;
 
-  const [counts, { matches }, trades] = await Promise.all([
+  const [counts, { matches }, trades, contact] = await Promise.all([
     getCollectionCounts(profile.id),
     getMatchesForCurrentUser(),
     getTradeRequestsForCurrentUser(),
+    getCurrentContact(),
   ]);
 
   const pendingIncoming = trades.filter((t) => t.status === "pending" && !t.isSender);
   const recentTrades = trades.slice(0, 4);
+  // Google sign-in doesn't provide a city/phone the way our own registration
+  // form collects them, so prompt those users (or anyone else missing them)
+  // to complete their profile - matching and trade contact reveal both
+  // depend on this data.
+  const profileIncomplete = !profile.city || !contact?.phone;
 
   return (
     <div>
@@ -36,11 +43,44 @@ export default async function DashboardPage() {
         <LinkButton href="/dashboard/matches">מצא טריידים קרובים</LinkButton>
       </div>
 
+      {profileIncomplete && (
+        <Card className="mb-6 border-amber-200 bg-amber-50">
+          <p className="font-bold text-amber-800">📝 כמעט סיימנו! השלימו את הפרופיל שלכם</p>
+          <p className="mt-1 text-sm text-amber-900/80">
+            נדרשים עיר ומספר טלפון/וואטסאפ כדי למצוא לכם התאמות קרובות ולאפשר לצד השני ליצור קשר
+            לאחר אישור טרייד.
+          </p>
+          <Link
+            href="/dashboard/profile"
+            className="mt-2 inline-block rounded-lg bg-amber-800 px-4 py-2 text-sm font-bold text-white transition hover:bg-amber-900"
+          >
+            השלמת הפרופיל
+          </Link>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <SummaryCard icon="📋" label="מדבקות שחסרות לי" value={counts.missing} href="/dashboard/stickers?tab=missing" accent="orange" />
         <SummaryCard icon="🔁" label="מדבקות כפולות" value={counts.duplicates} href="/dashboard/stickers?tab=duplicates" accent="green" />
         <SummaryCard icon="📍" label="התאמות קרובות" value={matches.length} href="/dashboard/matches" accent="blue" />
       </div>
+
+      {counts.missing === 0 && counts.duplicates === 0 && (
+        <Card className="mt-6 border-brand/20 bg-brand/5">
+          <p className="font-bold text-brand-dark">👋 עוד לא סימנת מדבקות - בואו נתחיל!</p>
+          <p className="mt-1 text-sm text-foreground/70">
+            הדרך המהירה ביותר: צלמו את הכפולים או עמוד באלבום עם{" "}
+            <Link href="/dashboard/scanner" className="font-bold text-brand-dark underline">
+              סורק ה-AI
+            </Link>
+            . אפשר גם להזין ידנית בעמוד{" "}
+            <Link href="/dashboard/stickers" className="font-bold text-brand-dark underline">
+              המדבקות שלי
+            </Link>
+            .
+          </p>
+        </Card>
+      )}
 
       {pendingIncoming.length > 0 && (
         <Card className="mt-6 border-amber-200 bg-amber-50">
@@ -84,6 +124,10 @@ export default async function DashboardPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="mt-8">
+        <ShareCard />
       </div>
     </div>
   );
