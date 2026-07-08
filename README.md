@@ -92,6 +92,8 @@ supabase/
   migrations/0006_marketplace.sql    listing_type/price/note on user_duplicates
   migrations/0007_hardening.sql      Suspended-user write enforcement, scan_events rate-limit table
   migrations/0008_bootstrap.sql      First-signup-becomes-admin, zero-touch production bootstrap
+  migrations/0009_auth_trigger_resilience.sql  Non-blocking profile provisioning + full SQL diagnostics
+  diagnostics/check_auth_trigger.sql Read-only script to debug "Database error saving new user"
   seed.sql                           Local-dev-only seed data (catalog + demo users + trades + chat)
 ```
 
@@ -133,6 +135,49 @@ to hand-write a fix. Four things make that true:
    (`src/lib/site.ts`) derives the app's public URL from the request's forwarded host when
    `NEXT_PUBLIC_SITE_URL` isn't set, so auth redirects still go to the right domain on a first deploy
    even if that env var is forgotten.
+
+### Diagnosing "Database error saving new user"
+
+If sign-in (email or Google) ever fails with this message, it means an exception was raised while
+Supabase's GoTrue service was inserting a row into `auth.users` - almost always because a trigger on
+that table (our `handle_new_user()`) hit an error, which aborts the *entire* signup transaction.
+GoTrue deliberately hides the underlying Postgres error from the API response for security reasons,
+so the client only ever sees this generic message - the real cause only appears in Postgres's own
+logs.
+
+**What was investigated and verified** (full detail in the PR description): `handle_new_user()` is
+`SECURITY DEFINER`, owned by `postgres`, with every table reference schema-qualified - the exact
+pattern Supabase's own troubleshooting guide recommends for this failure class. This was verified by
+reproducing Supabase's real privilege model locally (a restricted `supabase_auth_admin` role - what
+GoTrue actually connects as, with no direct grants on the `public` schema) and confirming the trigger
+correctly provisions a profile under that role, including for a payload shaped exactly like Google's
+OAuth metadata.
+
+**Hardening added regardless** (`0009_auth_trigger_resilience.sql`), since the exact failure couldn't
+be reproduced from a clean database and could be specific to how a given project's history/migrations
+were applied:
+
+1. Switched to Supabase's exact documented pattern (`search_path = ''` with fully-qualified names).
+2. Added redundant, explicit grants on `profiles`/`profile_contacts` to `supabase_auth_admin` -
+   belt-and-suspenders on top of `SECURITY DEFINER` (no-op on non-Supabase Postgres).
+3. **The profile-provisioning logic is now wrapped in an exception handler that logs the exact
+   `SQLSTATE`/`SQLERRM` via `RAISE WARNING` and lets `auth.users` creation succeed regardless.** This
+   was verified directly: a deliberately broken `profiles` schema still produced
+   `auth.users` row creation success end-to-end, while
+   `Postgres` logs showed the *exact* underlying constraint violation
+   (`WARNING: handle_new_user: profile provisioning failed for user <uuid> (sqlstate=23502): null
+   value in column "..." violates not-null constraint`). This is not "masking" the error - it's fully
+   logged with complete diagnostic detail, and the existing self-heal fallback
+   (`getCurrentProfile()`/`getCurrentContact()`, see above) completes the profile on first dashboard
+   load, under the signed-in user's own RLS policies, a completely independent code path from the
+   trigger. **Sign-in should never be permanently blocked by a profile-provisioning hiccup again.**
+
+**If this happens on your project**, run `supabase/diagnostics/check_auth_trigger.sql` (100%
+read-only) in the Supabase SQL Editor - it lists every trigger on `auth.users`, its function's
+ownership/`SECURITY DEFINER` status, the actual columns on `profiles`/`profile_contacts`, and the
+grants `supabase_auth_admin` has. Then check **Supabase Dashboard → Logs → Postgres Logs** for a
+`handle_new_user` warning around the time of the failed sign-in - after this migration, it will
+contain the exact SQL error (constraint name, permission, or column) instead of a generic message.
 
 ### Auth error handling (never show raw errors)
 
@@ -296,11 +341,15 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 6. `supabase/migrations/0006_marketplace.sql`
 7. `supabase/migrations/0007_hardening.sql`
 8. `supabase/migrations/0008_bootstrap.sql`
+9. `supabase/migrations/0009_auth_trigger_resilience.sql`
 
-All 8 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 9 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
-inserts/updates are required, including for your first admin account (see step 4).
+inserts/updates are required, including for your first admin account (see step 4). If sign-in ever
+fails with "Database error saving new user", see
+[Diagnosing "Database error saving new user"](#diagnosing-database-error-saving-new-user) above -
+`supabase/diagnostics/check_auth_trigger.sql` is a read-only script for exactly that.
 
 > If you already ran an earlier subset of these migrations for a previous release, you only need to
 > additionally run whichever ones you're missing - each is a pure addition/alteration and safe to
@@ -406,7 +455,7 @@ generic numbered stickers without full player/team data).
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 8 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 9 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`). Do **not** run `seed.sql` against it (it has a built-in guard that
    refuses to run if it detects any non-demo account already exists, but the safest rule is simply:
    don't run it against a hosted project at all).
@@ -429,7 +478,7 @@ That's the entire deployment - no SQL editor visits after step 1, no manual prof
 ### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 8 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+- ✅ All 9 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
   times, including a full clean-room run for this pass) with zero errors.
 - ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
   Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
@@ -437,6 +486,13 @@ That's the entire deployment - no SQL editor visits after step 1, no manual prof
   login-succeeds-but-dashboard-never-loads failure mode.
 - ✅ Simulated the first-signup-becomes-admin bootstrap end-to-end: first `auth.users` insert on a
   fresh database → `profiles.role = 'admin'`; second insert → `profiles.role = 'user'`.
+- ✅ Reproduced Supabase's actual restricted `supabase_auth_admin` role locally (not just `postgres`,
+  which bypasses all privilege checks) and confirmed `handle_new_user()` correctly provisions a
+  profile under that role for both email- and Google-shaped `raw_user_meta_data` payloads.
+- ✅ Deliberately broke the `profiles` schema to force a real trigger exception, and confirmed
+  `auth.users` row creation still succeeds (sign-in is no longer blocked) while the exact
+  `SQLSTATE`/`SQLERRM` is logged via `RAISE WARNING` - see "Diagnosing 'Database error saving new
+  user'" above.
 - ✅ `/auth/callback` and `/auth/confirm` verified via the dev server: with no `code`/`token_hash`
   present they redirect to `/login?error=confirmation_failed`, which renders a clear Hebrew message
   (the success path requires a real Supabase project's email link and can't be exercised in this
@@ -508,7 +564,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] On a brand new Supabase project (only the 8 migrations run, no seed, no manual SQL), register
+- [ ] On a brand new Supabase project (only the 9 migrations run, no seed, no manual SQL), register
       the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
@@ -521,6 +577,10 @@ third-party share sheets) can't be fully exercised in CI:
       account) and preserves any profile edits made after the first sign-in
 - [ ] If Google sign-in is the very first signup on a fresh project, confirm that account is also
       automatically an admin, exactly like the first email signup would be
+- [ ] If you ever see "Database error saving new user" again, run
+      `supabase/diagnostics/check_auth_trigger.sql` in the SQL Editor and check Supabase Dashboard →
+      Logs → Postgres Logs for a `handle_new_user` warning with the exact SQL error - it should no
+      longer be possible for this to permanently block sign-in (see "Diagnosing..." above)
 - [ ] Force a registration error (e.g. temporarily point `NEXT_PUBLIC_SUPABASE_URL` at an invalid
       host, or just watch for it under real network flakiness) and confirm the form shows a readable
       Hebrew message - never `"{}"`, raw JSON, or `[object Object]` - and that the real error appears
@@ -562,7 +622,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 8 migrations in order, confirm no errors, do **not** run
+- [ ] Fresh Supabase project: run all 9 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
 - [ ] Confirm the Auth URL Configuration (Site URL + Redirect URLs) is set for your deployed domain
@@ -587,6 +647,16 @@ third-party share sheets) can't be fully exercised in CI:
 - **Google sign-in provides no city/phone.** The dashboard prompts these users to complete their
   profile, but there's no hard gate preventing them from browsing with an incomplete one - matching
   quality and trade contact reveal are degraded (not broken) until they do.
+- **The "first signup is empty" check is not concurrency-safe.** Two signups within the same instant
+  (vanishingly unlikely in practice, since it requires the very first two-ever requests to race) could
+  theoretically both read "profiles is empty" and both become admin. Not worth a `SELECT ... FOR
+  UPDATE`-style fix for a one-time bootstrap check; documented here for completeness.
+- **`handle_new_user()` never blocks `auth.users` creation, even on its own internal failure** (see
+  "Diagnosing 'Database error saving new user'" above) - by design, so a profile-provisioning hiccup
+  can never turn into a permanent sign-in outage again. The trade-off: if that failure happens to
+  affect the very first signup specifically, the app-level self-heal fallback (which mirrors the
+  same admin-bootstrap check) picks up the slack, but it's a second code path to keep in sync if the
+  bootstrap logic ever changes - see `ensureProfileExists()` in `src/lib/data/profile.ts`.
 - **First-signup-becomes-admin is a bootstrap convenience, not a long-term access control model.**
   It only matters for the very first signup on a brand new project - sign up immediately after
   deploying so it's you, not a stranger who finds the URL first. For anything beyond initial setup,
