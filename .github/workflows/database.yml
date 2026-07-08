@@ -1,0 +1,91 @@
+name: Database migrations
+
+# Root cause this workflow fixes: this repo previously had NO automation
+# that applied supabase/migrations/*.sql anywhere - every migration had to
+# be manually pasted into the Supabase SQL Editor after merging a PR, which
+# is exactly how migration 0011 (teams/user_stickers) shipped in the
+# `supabase/migrations/` folder on `main` but was never actually run
+# against production. See the "Automated database migrations" section in
+# README.md for the full explanation and required one-time setup.
+#
+# This workflow has two jobs:
+#   1. test-migrations: on every PR/push touching supabase/migrations/**,
+#      applies every migration in order against a throwaway Postgres
+#      container, so a broken migration fails CI *before* merge instead of
+#      being discovered in production.
+#   2. deploy-migrations: on every push to `main` (i.e. every merged PR)
+#      that passes (1), runs `supabase db push` against the real project -
+#      no manual SQL Editor step required, ever again.
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+  workflow_dispatch: {}
+
+jobs:
+  test-migrations:
+    name: Test migrations apply cleanly
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      PGPASSWORD: postgres
+      PGHOST: localhost
+      PGUSER: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Simulate Supabase's auth schema (auth.users / auth.uid())
+        run: psql -v ON_ERROR_STOP=1 -f supabase/testing/auth_schema_stub.sql
+
+      - name: Apply every migration, in order
+        run: |
+          set -e
+          for f in supabase/migrations/*.sql; do
+            echo "::group::Applying $f"
+            psql -v ON_ERROR_STOP=1 -f "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Apply seed.sql (dev-only data - sanity check that it still matches the schema)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/seed.sql
+
+  deploy-migrations:
+    name: Deploy migrations to production
+    runs-on: ubuntu-latest
+    needs: test-migrations
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v3
+        with:
+          version: latest
+
+      - name: Link Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+
+      - name: Push any migrations not yet applied to production
+        run: supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
