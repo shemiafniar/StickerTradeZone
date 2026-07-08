@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { TeamFlag } from "@/components/collection/TeamFlag";
 import type { TeamProgress } from "@/lib/data/collection";
 
 export function TeamCard({ team }: { team: TeamProgress }) {
@@ -12,7 +13,7 @@ export function TeamCard({ team }: { team: TeamProgress }) {
       className="block rounded-2xl border border-black/10 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div className="flex items-center gap-3">
-        <span className="text-3xl leading-none">{team.flag_emoji}</span>
+        <TeamFlag flagIcon={team.flag_icon} flagEmoji={team.flag_emoji} />
         <div className="min-w-0 flex-1">
           <p className="truncate font-extrabold">{team.name_he}</p>
           <p className="text-xs font-bold tracking-wide text-foreground/40">{team.code}</p>

@@ -2,6 +2,7 @@ import { getAppSettings } from "@/lib/data/stickers";
 import { getTeams } from "@/lib/data/teams";
 import { Card } from "@/components/ui/Card";
 import { AddTeamForm } from "@/components/admin/StickerCatalogForms";
+import { TeamFlag } from "@/components/collection/TeamFlag";
 
 export const metadata = { title: "קטלוג מדבקות | Shashot" };
 
@@ -36,7 +37,9 @@ export default async function AdminStickersPage() {
               <tbody>
                 {teams.map((t) => (
                   <tr key={t.code} className="border-t border-black/5">
-                    <td className="py-1.5 text-lg">{t.flag_emoji}</td>
+                    <td className="py-1.5">
+                      <TeamFlag flagIcon={t.flag_icon} flagEmoji={t.flag_emoji} />
+                    </td>
                     <td className="py-1.5 font-bold">{t.code}</td>
                     <td className="py-1.5">{t.name_he}</td>
                     <td className="py-1.5 text-foreground/60">20</td>

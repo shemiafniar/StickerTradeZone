@@ -43,6 +43,13 @@ export type Team = {
   code: string;
   name_he: string;
   flag_emoji: string;
+  /**
+   * `flag-icons` library code (ISO 3166-1 alpha-2, or `gb-eng`/`gb-sct` for
+   * England/Scotland) used to render a real, reliably-rendering SVG flag.
+   * Null for custom teams an admin adds beyond the official roster, which
+   * fall back to displaying `flag_emoji` instead - see TeamFlag.tsx.
+   */
+  flag_icon: string | null;
   sort_order: number;
   created_at: string;
 };
