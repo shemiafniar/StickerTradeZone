@@ -23,6 +23,8 @@ bootstrap passes.
   deploys new migrations to production on merge to `main` - see
   [Automated database migrations](#automated-database-migrations-cicd)
 - Hebrew RTL UI (`Heebo` font), mobile-first design
+- Real national flags via [`flag-icons`](https://github.com/lipis/flag-icons) (SVG, not Unicode emoji
+  - see [Visual collection model](#visual-collection-model-teams--sticker-codes))
 - Pluggable Vision/OCR provider for the AI Sticker Scanner (mock by default, OpenAI Vision ready to
   enable)
 
@@ -120,6 +122,8 @@ supabase/
                                         "column whatsapp_phone does not exist" on affected projects)
   migrations/0011_shashot_teams.sql  Shashot redesign: teams table, team-scoped sticker codes,
                                         unified user_stickers (4-state) table - see below
+  migrations/0012_worldcup2026_teams.sql  Official 48-team FIFA World Cup 2026 roster + real
+                                        flag_icon column, replacing 0011's placeholder 32-team list
   diagnostics/check_auth_trigger.sql Read-only script to debug "Database error saving new user"
   seed.sql                           Local-dev-only seed data (demo users + collections + trades + chat)
 ```
@@ -130,10 +134,17 @@ The collection is no longer managed by typing sticker numbers into a text field 
 album: **teams** (national teams, shown as cards with a flag/Hebrew name/3-letter code) each contain
 exactly 20 **stickers**, uniquely identified by `TEAMCODE-number` (e.g. `GER-2`, `FRA-17`, `POR-5`).
 
-- `teams` (`code` primary key, `name_he`, `flag_emoji`, `sort_order`) - seeded with 32 real national
-  teams (including ישראל first) by `0011_shashot_teams.sql`. Admins can add more via the
+- `teams` (`code` primary key, `name_he`, `flag_emoji`, `flag_icon`, `sort_order`) - seeded with the
+  official 48-team FIFA World Cup 2026 roster (`0012_worldcup2026_teams.sql`; an earlier placeholder
+  32-team roster from `0011_shashot_teams.sql` is superseded by it). Admins can add more via the
   `admin_add_team()` RPC (see the admin catalog page), which also auto-generates that team's 20
   `stickers` rows in the same transaction.
+- **Real flags, not emoji**: `flag_icon` stores a [`flag-icons`](https://github.com/lipis/flag-icons)
+  library code (an ISO 3166-1 alpha-2 code, or `gb-eng`/`gb-sct` for England/Scotland) and is what the
+  UI actually renders (`TeamFlag.tsx`) as a crisp SVG - Unicode flag emoji (`flag_emoji`, kept only as
+  a fallback for custom admin-added teams with no known ISO code) render as plain two-letter text on
+  many real systems that lack a font with combined flag glyphs (older Windows, most Linux desktops),
+  which is exactly the "shows IL/BR/FR as text" bug this fixed.
 - `stickers` keeps its original `id` (uuid) primary key (so existing `trade_request_items` foreign
   keys never dangle across the migration) but gained `team_code` (FK to `teams`), a per-team
   `number` (1-20, no longer globally unique), and a `code` column that's always
@@ -188,6 +199,33 @@ existing projects:
    `listing_type`, no `scan_events` - reproducing the exact reported error first, then confirming the
    fix), and one stalled at `0006` (`listing_type` present, `scan_events` absent) - plus re-running the
    full migration a second time against the now-migrated database to confirm idempotency.
+
+**Updating the team roster (`0012_worldcup2026_teams.sql`)**: replaces `0011`'s placeholder 32-team
+roster with the official 48-team FIFA World Cup 2026 lineup, and switches flag rendering from Unicode
+emoji to real SVG flags (see `flag_icon` above). Same data-preservation philosophy as `0011`:
+
+1. 25 of the 32 old team codes are also in the new 48-team list (e.g. `ARG`, `BRA`, `FRA`, `GER`) -
+   their `stickers` and any `user_stickers`/`trade_request_items` rows are **never touched** (same
+   `code`, so there's nothing to migrate for them).
+2. The 7 codes no longer in the list (`ISR`, `ITA`, `CMR`, `NGA`, `POL`, `DEN`, `SRB`) are removed
+   along with their stickers, which cascades (via the existing `ON DELETE CASCADE` foreign keys) to
+   any `user_stickers`/`trade_request_items` referencing those *specific* stickers - there's no other
+   team for that data to sensibly move to once a team is removed from the catalog outright. Note that
+   `stickers.team_code -> teams.code` itself has no cascade (by design, so an unrelated bug could never
+   silently wipe a team's catalog) - the migration deletes `stickers` for removed teams *before*
+   deleting the `teams` rows themselves, in that order.
+3. The 23 newly-added codes get their 20 stickers auto-generated, exactly like `admin_add_team()`
+   does for a manually-added team.
+4. Team metadata (`name_he`/`flag_emoji`/`flag_icon`/`sort_order`) is fully upserted for all 48 codes,
+   so re-running this migration also fixes any of those fields on projects that already have it applied
+   (e.g. this is also how England's flag gets corrected from a plain black-flag placeholder to a real
+   flag on a project that already ran an earlier version of this migration).
+5. Verified locally against three scenarios: a fresh database (all 12 migrations, ends with exactly 48
+   teams / 960 stickers), a database with real pre-existing user data spanning both a kept team (a
+   duplicate with a price/note, a missing sticker, and an active trade request item - all confirmed
+   byte-for-byte intact afterward) and a removed team (confirmed those specific rows are gone), and a
+   second full re-run against the now-migrated database to confirm idempotency (zero rows
+   inserted/deleted/updated beyond the no-op upserts on the second pass).
 
 ### Why a `profiles` / `profile_contacts` split?
 
@@ -498,9 +536,10 @@ sandbox, and **not** Vercel's environment variables, which are a separate system
 | `SUPABASE_DB_PASSWORD` | Supabase dashboard → Project Settings → Database → Database password (the one you set when creating the project; reset it there if you don't have it) |
 
 After adding these, the **first** `deploy-migrations` run will hit a real problem worth knowing
-about: migrations `0001`-`0010` were applied to production by hand (via the SQL Editor), so Supabase's
+about: migrations `0001`-`0010` (and, until you've run it by hand once, `0011`/`0012` too) were
+applied to production manually (via the SQL Editor), so Supabase's
 `supabase_migrations.schema_migrations` tracking table has **no record** of them ever running. A
-naive `supabase db push` would try to re-run all 11 migrations from scratch and fail on the ones that
+naive `supabase db push` would try to re-run every migration from scratch and fail on the ones that
 try to create already-existing tables. Fix this **once**, from a machine with the Supabase CLI and
 network access to your project:
 
@@ -509,12 +548,13 @@ npx supabase login
 npx supabase link --project-ref <your-project-ref>
 
 # 1. Get production's public schema in sync RIGHT NOW (unblocks the app immediately):
-#    copy the full contents of supabase/migrations/0011_shashot_teams.sql into the
-#    Supabase Dashboard -> SQL Editor and run it, if you haven't already.
+#    copy the full contents of supabase/migrations/0011_shashot_teams.sql, then
+#    supabase/migrations/0012_worldcup2026_teams.sql, into the Supabase Dashboard ->
+#    SQL Editor and run each, in that order, if you haven't already.
 
-# 2. Tell Supabase's tracking table that 0001-0011 are already applied, so future
+# 2. Tell Supabase's tracking table that 0001-0012 are already applied, so future
 #    `db push` runs only ever apply what's genuinely new from here on:
-npx supabase migration repair --status applied 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011
+npx supabase migration repair --status applied 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012
 
 # 3. Confirm local and remote agree before trusting CI with it:
 npx supabase migration list
@@ -573,12 +613,13 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 9. `supabase/migrations/0009_auth_trigger_resilience.sql`
 10. `supabase/migrations/0010_reconcile_profile_contacts.sql`
 11. `supabase/migrations/0011_shashot_teams.sql`
+12. `supabase/migrations/0012_worldcup2026_teams.sql`
 
-All 11 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 12 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
 inserts/updates are required, including for your first admin account (see step 4) or the sticker
-catalog (32 national teams × 20 stickers each are seeded automatically by `0011`). If sign-in ever
+catalog (48 national teams × 20 stickers each are seeded automatically by `0011`/`0012`). If sign-in ever
 fails with "Database error saving new user", see
 [Diagnosing "Database error saving new user"](#diagnosing-database-error-saving-new-user) above -
 `supabase/diagnostics/check_auth_trigger.sql` is a read-only script for exactly that. If your
@@ -620,7 +661,7 @@ anything in this app's code.
 `supabase db reset`, which runs `supabase/seed.sql` automatically). **Never run it against a
 hosted/production Supabase project.**
 
-The team/sticker catalog itself (32 teams × 20 stickers) is already fully seeded by the migrations
+The team/sticker catalog itself (48 teams × 20 stickers = 960) is already fully seeded by the migrations
 above - this script only adds 10 demo accounts (password `Password123!` for all of them), sample
 collections spread across several real teams (including a couple of priced marketplace listings) so
 matches show up immediately, approximate demo locations for 5 of the accounts, a couple of sample
@@ -685,14 +726,14 @@ automatically be an admin.
 
 ### 8. (Optional) Add more teams to the catalog (as an admin)
 
-The catalog already ships with 32 real national teams (20 stickers each) seeded by the migrations -
+The catalog already ships with the official 48-team FIFA World Cup 2026 roster (20 stickers each) seeded by the migrations -
 there's nothing required here. If you want to add more teams, log in as an admin and go to
 **אזור ניהול → קטלוג מדבקות**: enter a 3-letter code, Hebrew name, and optional flag emoji, and the
 system automatically generates that team's 20 stickers (`CODE-1` through `CODE-20`).
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 11 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 12 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`) to get the initial schema in place. Do **not** run `seed.sql`
    against it (it has a built-in guard that refuses to run if it detects any non-demo account already
    exists, but the safest rule is simply: don't run it against a hosted project at all).
@@ -716,7 +757,7 @@ system automatically generates that team's 20 stickers (`CODE-1` through `CODE-2
 5. Deploy. No build-time secrets or server infra beyond Supabase + Vercel (+ GitHub Actions for step
    2) are required - there's no custom server, cron job, or queue in this Beta.
 6. Sign up through the live app. **You're automatically an admin** - nothing else to configure. The
-   sticker catalog (32 teams × 20 stickers) is already seeded; add more teams any time from
+   sticker catalog (48 teams × 20 stickers) is already seeded; add more teams any time from
    **אזור ניהול → קטלוג מדבקות** if you like.
 
 That's the entire deployment - after the one-time setup in steps 1-2, there are no more SQL editor
@@ -725,7 +766,7 @@ visits or manual profile/role edits, for this release or any future one.
 ### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 11 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+- ✅ All 12 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
   times, including a full clean-room run for this pass) with zero errors.
 - ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
   Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
@@ -811,7 +852,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] On a brand new Supabase project (only the 11 migrations run, no seed, no manual SQL), register
+- [ ] On a brand new Supabase project (only the 12 migrations run, no seed, no manual SQL), register
       the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
@@ -874,9 +915,14 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 11 migrations in order, confirm no errors, do **not** run
+- [ ] Fresh Supabase project: run all 12 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
+- [ ] `select count(*) from public.teams;` returns exactly 48, and "האוסף שלי" shows 48 team cards,
+      each with a real flag image (not a two-letter text fallback like "IL"/"BR") next to the Hebrew
+      name and 3-letter code - check on both a Chromium-based browser and, if possible, a Windows
+      machine without recently-updated fonts, since that's exactly the combination that showed plain
+      text instead of flags before this was fixed
 - [ ] Confirm the 3 GitHub Actions secrets for `.github/workflows/database.yml` are set
       (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`) and that
       `supabase migration list` shows every version in both the Local and Remote columns (see
