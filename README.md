@@ -93,6 +93,8 @@ supabase/
   migrations/0007_hardening.sql      Suspended-user write enforcement, scan_events rate-limit table
   migrations/0008_bootstrap.sql      First-signup-becomes-admin, zero-touch production bootstrap
   migrations/0009_auth_trigger_resilience.sql  Non-blocking profile provisioning + full SQL diagnostics
+  migrations/0010_reconcile_profile_contacts.sql  Reconciles drifted profile_contacts schemas (fixes
+                                        "column whatsapp_phone does not exist" on affected projects)
   diagnostics/check_auth_trigger.sql Read-only script to debug "Database error saving new user"
   seed.sql                           Local-dev-only seed data (catalog + demo users + trades + chat)
 ```
@@ -178,6 +180,48 @@ ownership/`SECURITY DEFINER` status, the actual columns on `profiles`/`profile_c
 grants `supabase_auth_admin` has. Then check **Supabase Dashboard → Logs → Postgres Logs** for a
 `handle_new_user` warning around the time of the failed sign-in - after this migration, it will
 contain the exact SQL error (constraint name, permission, or column) instead of a generic message.
+
+#### Confirmed root cause on one project, and the fix (`0010_reconcile_profile_contacts.sql`)
+
+The diagnostic process above found the exact SQL error on a live project's Postgres logs:
+
+```
+SQLSTATE 42703: column "whatsapp_phone" of relation "profile_contacts" does not exist
+```
+
+Whatever version of `handle_new_user()` was actually running on that project inserted into a
+column called `whatsapp_phone` - but that project's real `profile_contacts` table only ever had a
+`phone` column (no `whatsapp`, no `whatsapp_phone`). Nothing in this repo's code or migration
+history has ever referenced `whatsapp_phone` (verified with a full-codebase search) - the table's
+live shape had simply diverged from what `0001_schema.sql` defines. The most likely mechanism:
+`create table if not exists public.profile_contacts (...)` is a no-op against a table that already
+exists, so if `profile_contacts` was created before/outside this migration history on a given
+project (a different schema draft, a manual edit, etc.), running these migrations on top of it
+would never retroactively fix its columns - `CREATE TABLE IF NOT EXISTS` only helps on a database
+that doesn't have the table yet.
+
+`0010_reconcile_profile_contacts.sql` fixes this with no manual SQL required, on any project,
+regardless of which drifted or non-drifted state it's currently in:
+
+1. Adds `phone`/`whatsapp` to `profile_contacts` via `ADD COLUMN IF NOT EXISTS` if either is
+   missing (fixes the reported project, which only had `phone`).
+2. If a stray `whatsapp_phone` column exists on a given project, migrates its data into
+   `whatsapp` and drops it, so nothing can ever reference it again.
+3. Re-runs the exact `handle_new_user()` definition from `0009_auth_trigger_resilience.sql`
+   (`CREATE OR REPLACE FUNCTION`), guaranteeing the live function matches the now-reconciled table
+   even if `0009` was never applied on a given project for any reason.
+4. Re-creates the trigger and the `supabase_auth_admin` grants defensively, same as `0009`.
+
+This was verified end-to-end locally: the exact reported error was reproduced against a database
+seeded with `profile_contacts` missing `whatsapp` and a `handle_new_user()` deliberately rewritten
+to insert into `whatsapp_phone` (matching the log output byte-for-byte), then `0010` was applied
+and the identical signup payload succeeded, correctly populating both `phone` and `whatsapp`. A
+second run against a completely fresh database (migrations `0001`-`0010` in order, no drift) was
+also verified - every step in `0010` is a no-op there, confirming it's safe for both fresh and
+existing projects. `supabase/diagnostics/check_auth_trigger.sql` was also extended (query "4b") to
+flag exactly this class of drift going forward: any column `handle_new_user()`/this repo expects
+that's missing, and any column present on the live table that this repo's migrations don't
+recognize.
 
 ### Auth error handling (never show raw errors)
 
@@ -342,14 +386,18 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 7. `supabase/migrations/0007_hardening.sql`
 8. `supabase/migrations/0008_bootstrap.sql`
 9. `supabase/migrations/0009_auth_trigger_resilience.sql`
+10. `supabase/migrations/0010_reconcile_profile_contacts.sql`
 
-All 9 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 10 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
 inserts/updates are required, including for your first admin account (see step 4). If sign-in ever
 fails with "Database error saving new user", see
 [Diagnosing "Database error saving new user"](#diagnosing-database-error-saving-new-user) above -
-`supabase/diagnostics/check_auth_trigger.sql` is a read-only script for exactly that.
+`supabase/diagnostics/check_auth_trigger.sql` is a read-only script for exactly that. If your
+project was created before `0010` existed and already hit the `whatsapp_phone` error described
+there, just running `0010` (safe to run any time, on any project) resolves it - no manual SQL, no
+data loss.
 
 > If you already ran an earlier subset of these migrations for a previous release, you only need to
 > additionally run whichever ones you're missing - each is a pure addition/alteration and safe to
@@ -455,7 +503,7 @@ generic numbered stickers without full player/team data).
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 9 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 10 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`). Do **not** run `seed.sql` against it (it has a built-in guard that
    refuses to run if it detects any non-demo account already exists, but the safest rule is simply:
    don't run it against a hosted project at all).
@@ -478,7 +526,7 @@ That's the entire deployment - no SQL editor visits after step 1, no manual prof
 ### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 9 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+- ✅ All 10 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
   times, including a full clean-room run for this pass) with zero errors.
 - ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
   Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
@@ -564,7 +612,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] On a brand new Supabase project (only the 9 migrations run, no seed, no manual SQL), register
+- [ ] On a brand new Supabase project (only the 10 migrations run, no seed, no manual SQL), register
       the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
@@ -622,7 +670,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 9 migrations in order, confirm no errors, do **not** run
+- [ ] Fresh Supabase project: run all 10 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
 - [ ] Confirm the Auth URL Configuration (Site URL + Redirect URLs) is set for your deployed domain
