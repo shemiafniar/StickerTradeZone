@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getCurrentProfile } from "@/lib/data/profile";
 import { signOutAction } from "@/lib/actions/auth";
 import { MobileNav, type NavItem } from "@/components/MobileNav";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { getNotifications, getUnreadNotificationCount } from "@/lib/data/notifications";
 
 export async function SiteHeader() {
   const profile = await getCurrentProfile();
@@ -9,6 +11,7 @@ export async function SiteHeader() {
   const loggedInItems: NavItem[] = [
     { href: "/dashboard", label: "לוח בקרה" },
     { href: "/dashboard/stickers", label: "המדבקות שלי" },
+    { href: "/dashboard/scanner", label: "סורק AI" },
     { href: "/dashboard/matches", label: "התאמות" },
     { href: "/dashboard/trades", label: "טריידים" },
     { href: "/dashboard/profile", label: "פרופיל" },
@@ -25,6 +28,10 @@ export async function SiteHeader() {
         { href: "/register", label: "הרשמה" },
       ];
 
+  const [notifications, unreadCount] = profile
+    ? await Promise.all([getNotifications(15), getUnreadNotificationCount()])
+    : [[], 0];
+
   return (
     <header className="sticky top-0 z-30 border-b border-black/5 bg-white/90 backdrop-blur">
       <div className="relative mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
@@ -37,34 +44,40 @@ export async function SiteHeader() {
           </span>
         </Link>
 
-        <nav className="hidden items-center gap-1 sm:flex">
-          {items.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-foreground/70 transition hover:bg-black/5 hover:text-foreground"
-            >
-              {item.label}
-            </Link>
-          ))}
-          {profile && (
-            <form action={signOutAction}>
-              <button className="rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50">
-                התנתקות
-              </button>
-            </form>
-          )}
-          {!profile && (
-            <Link
-              href="/register"
-              className="mr-1 rounded-lg bg-brand px-4 py-2 text-sm font-bold text-white transition hover:bg-brand-dark"
-            >
-              הצטרפו עכשיו
-            </Link>
-          )}
-        </nav>
+        <div className="flex items-center gap-1">
+          <nav className="hidden items-center gap-1 sm:flex">
+            {items.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="rounded-lg px-3 py-2 text-sm font-medium text-foreground/70 transition hover:bg-black/5 hover:text-foreground"
+              >
+                {item.label}
+              </Link>
+            ))}
+            {profile && (
+              <form action={signOutAction}>
+                <button className="rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50">
+                  התנתקות
+                </button>
+              </form>
+            )}
+            {!profile && (
+              <Link
+                href="/register"
+                className="mr-1 rounded-lg bg-brand px-4 py-2 text-sm font-bold text-white transition hover:bg-brand-dark"
+              >
+                הצטרפו עכשיו
+              </Link>
+            )}
+          </nav>
 
-        <MobileNav items={items} signOutAction={profile ? signOutAction : undefined} />
+          {profile && (
+            <NotificationBell userId={profile.id} initialNotifications={notifications} initialUnreadCount={unreadCount} />
+          )}
+
+          <MobileNav items={items} signOutAction={profile ? signOutAction : undefined} />
+        </div>
       </div>
     </header>
   );
