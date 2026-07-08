@@ -6,7 +6,7 @@ import { getCurrentProfile } from "@/lib/data/profile";
 import { redirect } from "next/navigation";
 
 export default async function LandingPage() {
-  const profile = await getCurrentProfile();
+  const [profile, siteUrl] = await Promise.all([getCurrentProfile(), getSiteUrl()]);
   if (profile) redirect("/dashboard");
 
   return (
@@ -91,7 +91,7 @@ export default async function LandingPage() {
           </LinkButton>
 
           <div className="mt-6 flex justify-center">
-            <ShareButtons url={getSiteUrl()} compact />
+            <ShareButtons url={siteUrl} compact />
           </div>
         </div>
       </section>
