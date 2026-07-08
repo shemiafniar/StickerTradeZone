@@ -1,4 +1,4 @@
-import { getCurrentProfile } from "@/lib/data/profile";
+import { getCurrentContact, getCurrentProfile } from "@/lib/data/profile";
 import { getCollectionCounts } from "@/lib/data/collection";
 import { getMatchesForCurrentUser } from "@/lib/data/matches";
 import { getTradeRequestsForCurrentUser } from "@/lib/data/trades";
@@ -15,14 +15,20 @@ export default async function DashboardPage() {
   const profile = await getCurrentProfile();
   if (!profile) return null;
 
-  const [counts, { matches }, trades] = await Promise.all([
+  const [counts, { matches }, trades, contact] = await Promise.all([
     getCollectionCounts(profile.id),
     getMatchesForCurrentUser(),
     getTradeRequestsForCurrentUser(),
+    getCurrentContact(),
   ]);
 
   const pendingIncoming = trades.filter((t) => t.status === "pending" && !t.isSender);
   const recentTrades = trades.slice(0, 4);
+  // Google sign-in doesn't provide a city/phone the way our own registration
+  // form collects them, so prompt those users (or anyone else missing them)
+  // to complete their profile - matching and trade contact reveal both
+  // depend on this data.
+  const profileIncomplete = !profile.city || !contact?.phone;
 
   return (
     <div>
@@ -36,6 +42,22 @@ export default async function DashboardPage() {
         </div>
         <LinkButton href="/dashboard/matches">מצא טריידים קרובים</LinkButton>
       </div>
+
+      {profileIncomplete && (
+        <Card className="mb-6 border-amber-200 bg-amber-50">
+          <p className="font-bold text-amber-800">📝 כמעט סיימנו! השלימו את הפרופיל שלכם</p>
+          <p className="mt-1 text-sm text-amber-900/80">
+            נדרשים עיר ומספר טלפון/וואטסאפ כדי למצוא לכם התאמות קרובות ולאפשר לצד השני ליצור קשר
+            לאחר אישור טרייד.
+          </p>
+          <Link
+            href="/dashboard/profile"
+            className="mt-2 inline-block rounded-lg bg-amber-800 px-4 py-2 text-sm font-bold text-white transition hover:bg-amber-900"
+          >
+            השלמת הפרופיל
+          </Link>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <SummaryCard icon="📋" label="מדבקות שחסרות לי" value={counts.missing} href="/dashboard/stickers?tab=missing" accent="orange" />

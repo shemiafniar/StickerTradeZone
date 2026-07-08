@@ -6,6 +6,8 @@ import { signInAction, type AuthActionState } from "@/lib/actions/auth";
 import { FieldGroup, Input, Label } from "@/components/ui/Field";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { ErrorMessage } from "@/components/ui/FormMessage";
+import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { OrDivider } from "@/components/auth/OrDivider";
 
 const initialState: AuthActionState = {};
 
@@ -13,30 +15,35 @@ export function LoginForm({ next }: { next?: string }) {
   const [state, formAction] = useActionState(signInAction, initialState);
 
   return (
-    <form action={formAction} className="w-full">
-      <ErrorMessage message={state.error} />
-      <input type="hidden" name="next" value={next ?? "/dashboard"} />
+    <div className="w-full">
+      <GoogleSignInButton next={next} />
+      <OrDivider />
 
-      <FieldGroup>
-        <Label htmlFor="email">אימייל</Label>
-        <Input id="email" name="email" type="email" required autoComplete="email" dir="ltr" />
-      </FieldGroup>
+      <form action={formAction} className="w-full">
+        <ErrorMessage message={state.error} />
+        <input type="hidden" name="next" value={next ?? "/dashboard"} />
 
-      <FieldGroup>
-        <Label htmlFor="password">סיסמה</Label>
-        <Input id="password" name="password" type="password" required autoComplete="current-password" />
-      </FieldGroup>
+        <FieldGroup>
+          <Label htmlFor="email">אימייל</Label>
+          <Input id="email" name="email" type="email" required autoComplete="email" dir="ltr" />
+        </FieldGroup>
 
-      <SubmitButton className="mt-2 w-full" size="lg">
-        התחברות
-      </SubmitButton>
+        <FieldGroup>
+          <Label htmlFor="password">סיסמה</Label>
+          <Input id="password" name="password" type="password" required autoComplete="current-password" />
+        </FieldGroup>
 
-      <p className="mt-5 text-center text-sm text-foreground/60">
-        עדיין אין לכם חשבון?{" "}
-        <Link href="/register" className="font-bold text-brand-dark">
-          הרשמה
-        </Link>
-      </p>
-    </form>
+        <SubmitButton className="mt-2 w-full" size="lg">
+          התחברות
+        </SubmitButton>
+
+        <p className="mt-5 text-center text-sm text-foreground/60">
+          עדיין אין לכם חשבון?{" "}
+          <Link href="/register" className="font-bold text-brand-dark">
+            הרשמה
+          </Link>
+        </p>
+      </form>
+    </div>
   );
 }

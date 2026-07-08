@@ -3,15 +3,17 @@ import { createClient } from "@/lib/supabase/server";
 
 /**
  * PKCE code-exchange callback. This is where Supabase redirects after a
- * user clicks an email confirmation link (or any other email/OAuth flow) -
- * `emailRedirectTo` is set to this route in signUpAction, so this works with
- * Supabase's default "Confirm signup" email template out of the box, with
- * no dashboard email-template edits required. See also ../confirm/route.ts,
- * a fallback for projects whose template uses the older token_hash style.
+ * user clicks an email confirmation link, or completes a Google OAuth
+ * consent screen - `emailRedirectTo`/`redirectTo` are set to this route in
+ * signUpAction/signInWithGoogleAction, so this works with Supabase's default
+ * email template and OAuth flow out of the box. See also ../confirm/route.ts,
+ * a fallback for projects whose email template uses the older token_hash
+ * style.
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
+  const providerError = searchParams.get("error") || searchParams.get("error_description");
   const next = normalizeNext(searchParams.get("next"));
 
   if (code) {
@@ -20,9 +22,15 @@ export async function GET(request: NextRequest) {
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
+    console.error("[auth:callback] exchangeCodeForSession error:", error);
+  } else if (providerError) {
+    // The user cancelled the Google consent screen, or the provider itself
+    // reported a problem - logged for debugging, never shown raw to the user.
+    console.error("[auth:callback] provider error:", providerError);
   }
 
-  return NextResponse.redirect(`${origin}/login?error=confirmation_failed`);
+  const errorCode = providerError ? "oauth_failed" : "confirmation_failed";
+  return NextResponse.redirect(`${origin}/login?error=${errorCode}`);
 }
 
 function normalizeNext(next: string | null): string {
