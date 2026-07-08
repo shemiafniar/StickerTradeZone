@@ -7,6 +7,7 @@ export const metadata = { title: "התחברות | Sticker Trade IL" };
 const errorMessages: Record<string, string> = {
   confirmation_failed:
     "אימות המייל נכשל או שהקישור פג תוקף. נסו להתחבר עם הסיסמה שלכם, או להירשם מחדש כדי לקבל מייל אימות חדש.",
+  oauth_failed: "ההתחברות עם Google לא הושלמה. אפשר לנסות שוב, או להתחבר עם אימייל וסיסמה.",
 };
 
 export default async function LoginPage({
