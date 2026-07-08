@@ -5,7 +5,29 @@
 -- only safe on a local Supabase stack (`supabase start` + `supabase db reset`).
 -- NEVER run this file against a hosted/production Supabase project - use
 -- supabase.auth.admin.createUser() with the service role key instead.
+--
+-- Safety guard: aborts immediately if auth.users already contains any real
+-- account (i.e. anything other than our own @stickertrade.local demo
+-- accounts from a previous run of this same script). This won't stop
+-- someone from running it on a *fresh, empty* hosted project, but it does
+-- stop the far more likely accident of pasting this into the SQL Editor of
+-- a project that already has real signups.
 -- =========================================================================
+do $$
+declare
+  v_foreign_users integer;
+begin
+  select count(*) into v_foreign_users
+  from auth.users
+  where email not like '%@stickertrade.local';
+
+  if v_foreign_users > 0 then
+    raise exception
+      'Refusing to run seed.sql: auth.users already contains % non-demo account(s). '
+      'This script is for a fresh local dev database only - see the warning at the top of this file.',
+      v_foreign_users;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- 1) Sticker catalog: a small demo album of 60 generic sticker numbers
