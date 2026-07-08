@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ISRAEL_CITIES } from "@/lib/cities";
 import { checkRateLimit, formatRetrySeconds } from "@/lib/rateLimit";
 import { getClientIp } from "@/lib/requestInfo";
+import { getSiteUrl } from "@/lib/site";
 
 export interface AuthActionState {
   error?: string;
@@ -49,12 +50,18 @@ export async function signUpAction(
     };
   }
 
+  const siteUrl = await getSiteUrl();
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
       data: { full_name: fullName, city, neighborhood: neighborhood || null, phone },
+      // Where Supabase sends the user after they click the confirmation
+      // link in their email - our /auth/callback route exchanges the code
+      // for a session, so this works with the default email template with
+      // no dashboard changes required.
+      emailRedirectTo: `${siteUrl}/auth/callback?next=/dashboard`,
     },
   });
 
