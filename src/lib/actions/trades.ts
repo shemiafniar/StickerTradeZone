@@ -3,8 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getStickerNumberToIdMap } from "@/lib/data/stickers";
-import { parseStickerNumbers } from "@/lib/stickerInput";
+import { getStickerCodeToIdMap } from "@/lib/data/stickers";
+import { parseStickerCodes } from "@/lib/stickerCodes";
 import { formatRetrySeconds } from "@/lib/rateLimit";
 import type { Profile } from "@/types/database";
 
@@ -60,14 +60,14 @@ export async function createTradeRequestAction(
     };
   }
 
-  const giveNumbers = parseStickerNumbers(giveInput);
-  const receiveNumbers = parseStickerNumbers(receiveInput);
+  const giveCodes = parseStickerCodes(giveInput);
+  const receiveCodes = parseStickerCodes(receiveInput);
 
-  if (giveNumbers.length === 0 && receiveNumbers.length === 0) {
+  if (giveCodes.length === 0 && receiveCodes.length === 0) {
     return { error: "נא לבחור לפחות מדבקה אחת להצעה" };
   }
 
-  const numberToId = await getStickerNumberToIdMap();
+  const codeToId = await getStickerCodeToIdMap();
 
   const { data: trade, error: tradeError } = await supabase
     .from("trade_requests")
@@ -80,12 +80,12 @@ export async function createTradeRequestAction(
   }
 
   const items = [
-    ...giveNumbers
-      .map((n) => numberToId.get(n))
+    ...giveCodes
+      .map((c) => codeToId.get(c))
       .filter((id): id is string => Boolean(id))
       .map((sticker_id) => ({ trade_request_id: trade.id, sticker_id, direction: "give" as const })),
-    ...receiveNumbers
-      .map((n) => numberToId.get(n))
+    ...receiveCodes
+      .map((c) => codeToId.get(c))
       .filter((id): id is string => Boolean(id))
       .map((sticker_id) => ({ trade_request_id: trade.id, sticker_id, direction: "receive" as const })),
   ];

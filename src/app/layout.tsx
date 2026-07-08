@@ -11,7 +11,7 @@ const heebo = Heebo({
 });
 
 export const metadata: Metadata = {
-  title: "Sticker Trade IL | אזור החלפת מדבקות לאספנים",
+  title: "Shashot | אזור החלפת מדבקות לאספנים",
   description:
     "פלטפורמת קהילה עצמאית לאספני מדבקות כדורגל בישראל - נהלו כפולים וחוסרים ומצאו טריידים קרובים אליכם. אינה קשורה ל-Panini, FIFA או כל מותג רשמי.",
 };

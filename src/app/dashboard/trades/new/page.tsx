@@ -3,7 +3,7 @@ import { getCurrentProfile, getProfileById } from "@/lib/data/profile";
 import { Card } from "@/components/ui/Card";
 import { NewTradeForm } from "@/components/trades/NewTradeForm";
 
-export const metadata = { title: "בקשת טרייד חדשה | Sticker Trade IL" };
+export const metadata = { title: "בקשת טרייד חדשה | Shashot" };
 
 export default async function NewTradePage({
   searchParams,

@@ -1,6 +1,6 @@
 import { headers } from "next/headers";
 
-const PLACEHOLDER_SITE_URL = "https://stickertrade.il";
+const PLACEHOLDER_SITE_URL = "https://shashot.app";
 
 /**
  * Resolves the app's public URL for building absolute links (share links,

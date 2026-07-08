@@ -13,7 +13,7 @@ import {
   declineTradeAction,
 } from "@/lib/actions/trades";
 
-export const metadata = { title: "פרטי טרייד | Sticker Trade IL" };
+export const metadata = { title: "פרטי טרייד | Shashot" };
 
 export default async function TradeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -58,14 +58,14 @@ export default async function TradeDetailPage({ params }: { params: Promise<{ id
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="rounded-xl bg-green-50 p-3">
             <p className="text-xs font-bold text-green-700">תקבל/י</p>
-            <p className="mt-1 text-sm font-bold text-green-800">
-              {trade.itemsToReceive.map((i) => `#${i.stickerNumber}`).join(", ") || "-"}
+            <p className="mt-1 text-sm font-bold text-green-800" dir="ltr">
+              {trade.itemsToReceive.map((i) => i.stickerCode).join(", ") || "-"}
             </p>
           </div>
           <div className="rounded-xl bg-blue-50 p-3">
             <p className="text-xs font-bold text-blue-700">תיתן/י</p>
-            <p className="mt-1 text-sm font-bold text-blue-800">
-              {trade.itemsToGive.map((i) => `#${i.stickerNumber}`).join(", ") || "-"}
+            <p className="mt-1 text-sm font-bold text-blue-800" dir="ltr">
+              {trade.itemsToGive.map((i) => i.stickerCode).join(", ") || "-"}
             </p>
           </div>
         </div>

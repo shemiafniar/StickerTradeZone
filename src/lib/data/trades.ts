@@ -1,12 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
-import { getStickerIdToNumberMap } from "@/lib/data/stickers";
+import { getStickerIdToCodeMap } from "@/lib/data/stickers";
 import type { Profile, TradeRequest, TradeRequestItem } from "@/types/database";
 
 export interface TradeRequestWithDetails extends TradeRequest {
   otherUser: Profile | null;
   isSender: boolean;
-  itemsToGive: { stickerNumber: number; quantity: number }[];
-  itemsToReceive: { stickerNumber: number; quantity: number }[];
+  itemsToGive: { stickerCode: string; quantity: number }[];
+  itemsToReceive: { stickerCode: string; quantity: number }[];
 }
 
 export async function getTradeRequestsForCurrentUser(): Promise<TradeRequestWithDetails[]> {
@@ -30,10 +30,10 @@ export async function getTradeRequestsForCurrentUser(): Promise<TradeRequestWith
     new Set(tradeRows.map((t) => (t.from_user_id === user.id ? t.to_user_id : t.from_user_id)))
   );
 
-  const [{ data: items }, { data: profiles }, idToNumber] = await Promise.all([
+  const [{ data: items }, { data: profiles }, idToCode] = await Promise.all([
     supabase.from("trade_request_items").select("*").in("trade_request_id", tradeIds),
     supabase.from("profiles").select("*").in("id", otherUserIds),
-    getStickerIdToNumberMap(),
+    getStickerIdToCodeMap(),
   ]);
 
   const profileMap = new Map((profiles as Profile[] | null)?.map((p) => [p.id, p]) ?? []);
@@ -59,10 +59,10 @@ export async function getTradeRequestsForCurrentUser(): Promise<TradeRequestWith
       isSender,
       itemsToGive: tradeItems
         .filter((i) => i.direction === giveDirection)
-        .map((i) => ({ stickerNumber: idToNumber.get(i.sticker_id) ?? 0, quantity: i.quantity })),
+        .map((i) => ({ stickerCode: idToCode.get(i.sticker_id) ?? "", quantity: i.quantity })),
       itemsToReceive: tradeItems
         .filter((i) => i.direction === receiveDirection)
-        .map((i) => ({ stickerNumber: idToNumber.get(i.sticker_id) ?? 0, quantity: i.quantity })),
+        .map((i) => ({ stickerCode: idToCode.get(i.sticker_id) ?? "", quantity: i.quantity })),
     };
   });
 }

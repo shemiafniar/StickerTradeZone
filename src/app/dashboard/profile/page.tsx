@@ -4,7 +4,7 @@ import { ProfileForm } from "@/components/profile/ProfileForm";
 import { LocationToggle } from "@/components/location/LocationToggle";
 import { ShareCard } from "@/components/share/ShareCard";
 
-export const metadata = { title: "פרופיל | Sticker Trade IL" };
+export const metadata = { title: "פרופיל | Shashot" };
 
 export default async function ProfilePage() {
   const [profile, contact] = await Promise.all([getCurrentProfile(), getCurrentContact()]);

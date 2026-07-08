@@ -5,14 +5,14 @@ export interface MatchCandidateInput {
   fullName: string;
   city: string;
   neighborhood: string | null;
-  /** sticker numbers this candidate has spare and is willing to trade/sell */
-  duplicateNumbers: number[];
-  /** sticker numbers this candidate marked as for-sale (listing_type sale|both) */
-  forSaleNumbers: number[];
-  /** price (if any) per sticker number this candidate is selling */
-  priceByNumber: Record<number, number | null>;
-  /** sticker numbers this candidate is missing */
-  missingNumbers: number[];
+  /** sticker codes this candidate has spare and is willing to trade/sell */
+  duplicateCodes: string[];
+  /** sticker codes this candidate marked as for-sale (listing_type sale|both) */
+  forSaleCodes: string[];
+  /** price (if any) per sticker code this candidate is selling */
+  priceByCode: Record<string, number | null>;
+  /** sticker codes this candidate is missing */
+  missingCodes: string[];
   /** precomputed distance in km from the current user, if both share location, else null */
   distanceKm: number | null;
 }
@@ -23,11 +23,11 @@ export interface MatchResult {
   city: string;
   neighborhood: string | null;
   /** stickers the current user could RECEIVE from this candidate */
-  theyHaveThatINeed: number[];
+  theyHaveThatINeed: string[];
   /** stickers the current user could GIVE to this candidate */
-  theyNeedThatIHave: number[];
+  theyNeedThatIHave: string[];
   /** stickers this candidate is offering for sale that the current user needs, with price */
-  forSaleThatINeed: { number: number; price: number | null }[];
+  forSaleThatINeed: { code: string; price: number | null }[];
   score: number;
   locationRank: 0 | 1 | 2;
   distanceKm: number | null;
@@ -44,22 +44,22 @@ export interface MatchResult {
  * even before/without opting into location sharing.
  */
 export function computeMatches(
-  myDuplicateNumbers: number[],
-  myMissingNumbers: number[],
+  myDuplicateCodes: string[],
+  myMissingCodes: string[],
   myCity: string,
   candidates: MatchCandidateInput[]
 ): MatchResult[] {
-  const myDuplicateSet = new Set(myDuplicateNumbers);
-  const myMissingSet = new Set(myMissingNumbers);
+  const myDuplicateSet = new Set(myDuplicateCodes);
+  const myMissingSet = new Set(myMissingCodes);
 
   const results: MatchResult[] = [];
 
   for (const candidate of candidates) {
-    const theyHaveThatINeed = candidate.duplicateNumbers.filter((n) => myMissingSet.has(n));
-    const theyNeedThatIHave = candidate.missingNumbers.filter((n) => myDuplicateSet.has(n));
-    const forSaleThatINeed = candidate.forSaleNumbers
-      .filter((n) => myMissingSet.has(n))
-      .map((n) => ({ number: n, price: candidate.priceByNumber[n] ?? null }));
+    const theyHaveThatINeed = candidate.duplicateCodes.filter((c) => myMissingSet.has(c));
+    const theyNeedThatIHave = candidate.missingCodes.filter((c) => myDuplicateSet.has(c));
+    const forSaleThatINeed = candidate.forSaleCodes
+      .filter((c) => myMissingSet.has(c))
+      .map((c) => ({ code: c, price: candidate.priceByCode[c] ?? null }));
 
     const score = theyHaveThatINeed.length + theyNeedThatIHave.length;
     if (score === 0) continue;

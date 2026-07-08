@@ -23,7 +23,7 @@ export function ShareButtons({ url, compact }: { url: string; compact?: boolean 
   async function handleNativeShare() {
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
-        await navigator.share({ title: "Sticker Trade IL", text: SHARE_TEXT, url });
+        await navigator.share({ title: "Shashot", text: SHARE_TEXT, url });
       } catch {
         // user cancelled the share sheet - nothing to do
       }

@@ -72,68 +72,33 @@ export interface UpdateCatalogState {
   success?: boolean;
 }
 
-export async function updateTotalStickersAction(
-  _prevState: UpdateCatalogState,
-  formData: FormData
-): Promise<UpdateCatalogState> {
+/** Adds a new participating national team (and auto-generates its 20 stickers) via the admin_add_team() RPC. */
+export async function addTeamAction(_prevState: UpdateCatalogState, formData: FormData): Promise<UpdateCatalogState> {
   try {
     const { supabase, adminId } = await requireAdmin();
-    const total = Number(formData.get("total") ?? 0);
+    const code = String(formData.get("code") ?? "").trim().toUpperCase();
+    const nameHe = String(formData.get("nameHe") ?? "").trim();
+    const flagEmoji = String(formData.get("flagEmoji") ?? "").trim();
 
-    if (!Number.isFinite(total) || total < 0 || total > 5000) {
-      return { error: "נא להזין מספר תקין בין 0 ל-5000" };
+    if (!/^[A-Z]{3}$/.test(code)) {
+      return { error: "קוד הנבחרת חייב להיות 3 אותיות באנגלית (למשל GER)" };
+    }
+    if (!nameHe) {
+      return { error: "נא להזין שם נבחרת בעברית" };
     }
 
-    const { error } = await supabase.rpc("generate_sticker_range", { p_total: total });
-    if (error) return { error: error.message };
-
-    await logAdminAction(supabase, adminId, "update_total_stickers", null, { total });
-
-    revalidatePath("/admin/stickers");
-    revalidatePath("/dashboard/stickers");
-    return { success: true };
-  } catch {
-    return { error: "פעולה זו מיועדת למנהלים בלבד" };
-  }
-}
-
-export async function importStickerListAction(
-  _prevState: UpdateCatalogState,
-  formData: FormData
-): Promise<UpdateCatalogState> {
-  try {
-    const { supabase, adminId } = await requireAdmin();
-    const text = String(formData.get("list") ?? "");
-
-    const lines = text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-
-    const rows = lines
-      .map((line) => {
-        const [numberStr, name, team] = line.split(",").map((p) => p?.trim());
-        const number = Number(numberStr);
-        if (!Number.isFinite(number) || number <= 0) return null;
-        return { number, name: name || null, team: team || null };
-      })
-      .filter((r): r is { number: number; name: string | null; team: string | null } => Boolean(r));
-
-    if (rows.length === 0) {
-      return { error: "לא נמצאו שורות תקינות. פורמט: מספר,שם (אופציונלי),קבוצה (אופציונלי)" };
+    const { error } = await supabase.rpc("admin_add_team", {
+      p_code: code,
+      p_name_he: nameHe,
+      p_flag_emoji: flagEmoji || null,
+      p_sort_order: null,
+    });
+    if (error) {
+      if (error.message.includes("duplicate key")) return { error: `הקוד ${code} כבר קיים במערכת` };
+      return { error: error.message };
     }
 
-    const { error } = await supabase.from("stickers").upsert(rows, { onConflict: "number" });
-    if (error) return { error: error.message };
-
-    const maxNumber = Math.max(...rows.map((r) => r.number));
-    await supabase
-      .from("app_settings")
-      .update({ total_stickers: maxNumber })
-      .eq("id", true)
-      .lt("total_stickers", maxNumber);
-
-    await logAdminAction(supabase, adminId, "import_sticker_list", null, { count: rows.length });
+    await logAdminAction(supabase, adminId, "add_team", null, { code, nameHe });
 
     revalidatePath("/admin/stickers");
     revalidatePath("/dashboard/stickers");

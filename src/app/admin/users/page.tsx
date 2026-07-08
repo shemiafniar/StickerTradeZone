@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { SuspendUserButton } from "@/components/admin/SuspendUserButton";
 
-export const metadata = { title: "ניהול משתמשים | Sticker Trade IL" };
+export const metadata = { title: "ניהול משתמשים | Shashot" };
 
 export default async function AdminUsersPage({
   searchParams,

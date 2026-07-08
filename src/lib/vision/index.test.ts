@@ -30,24 +30,29 @@ describe("getVisionProvider", () => {
 describe("MockVisionProvider", () => {
   it("never calls any network API and always returns a result", async () => {
     const provider = new MockVisionProvider();
-    const duplicateResult = await provider.scanDuplicates("fake-base64-data", "image/jpeg");
-    expect(duplicateResult.isMock).toBe(true);
-    expect(duplicateResult.detected.length).toBeGreaterThan(0);
-    for (const d of duplicateResult.detected) {
-      expect(d.number).toBeGreaterThan(0);
+    const result = await provider.scanStickerBacks("fake-base64-data", "image/jpeg");
+    expect(result.isMock).toBe(true);
+    expect(result.detected.length).toBeGreaterThan(0);
+    for (const d of result.detected) {
+      expect(d.teamCode).toMatch(/^[A-Z]{3}$/);
+      expect(d.number).toBeGreaterThanOrEqual(1);
+      expect(d.number).toBeLessThanOrEqual(20);
       expect(d.confidence).toBeGreaterThanOrEqual(0);
       expect(d.confidence).toBeLessThanOrEqual(1);
     }
+  });
 
-    const albumResult = await provider.scanAlbumPage("fake-base64-data", "image/jpeg");
-    expect(albumResult.isMock).toBe(true);
-    expect(albumResult.slots.length).toBeGreaterThan(0);
+  it("does not produce duplicate team+number pairs", async () => {
+    const provider = new MockVisionProvider();
+    const result = await provider.scanStickerBacks("x".repeat(100), "image/jpeg");
+    const keys = result.detected.map((d) => `${d.teamCode}-${d.number}`);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it("produces a stable result for the same input length", async () => {
     const provider = new MockVisionProvider();
-    const a = await provider.scanDuplicates("x".repeat(100), "image/jpeg");
-    const b = await provider.scanDuplicates("x".repeat(100), "image/jpeg");
+    const a = await provider.scanStickerBacks("x".repeat(100), "image/jpeg");
+    const b = await provider.scanStickerBacks("x".repeat(100), "image/jpeg");
     expect(a.detected).toEqual(b.detected);
   });
 });

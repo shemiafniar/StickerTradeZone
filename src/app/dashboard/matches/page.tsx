@@ -3,7 +3,7 @@ import { getMatchesForCurrentUser } from "@/lib/data/matches";
 import { MatchCard } from "@/components/matches/MatchCard";
 import { Card } from "@/components/ui/Card";
 
-export const metadata = { title: "התאמות | Sticker Trade IL" };
+export const metadata = { title: "התאמות | Shashot" };
 
 export default async function MatchesPage() {
   const { matches, myCity, locationEnabled } = await getMatchesForCurrentUser();

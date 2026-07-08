@@ -1,82 +1,75 @@
 import Link from "next/link";
 import { getCurrentProfile } from "@/lib/data/profile";
-import { getUserDuplicates, getUserMissing } from "@/lib/data/collection";
+import { getTeamsWithProgress } from "@/lib/data/collection";
 import { getAppSettings } from "@/lib/data/stickers";
+import { TeamCard } from "@/components/collection/TeamCard";
 import { Card } from "@/components/ui/Card";
-import { BulkStickerForm } from "@/components/stickers/BulkStickerForm";
-import { DuplicateList } from "@/components/stickers/DuplicateList";
-import { MissingList } from "@/components/stickers/MissingList";
-import { bulkAddDuplicatesAction, bulkAddMissingAction } from "@/lib/actions/stickers";
-import { cn } from "@/lib/cn";
 
-export const metadata = { title: "המדבקות שלי | Sticker Trade IL" };
+export const metadata = { title: "האוסף שלי | Shashot" };
 
-export default async function StickersPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ tab?: string }>;
-}) {
-  const { tab } = await searchParams;
-  const activeTab = tab === "missing" ? "missing" : "duplicates";
-
+export default async function StickersPage() {
   const profile = await getCurrentProfile();
   if (!profile) return null;
 
-  const [duplicates, missing, settings] = await Promise.all([
-    getUserDuplicates(profile.id),
-    getUserMissing(profile.id),
-    getAppSettings(),
-  ]);
+  const [teams, settings] = await Promise.all([getTeamsWithProgress(profile.id), getAppSettings()]);
+
+  const totalOwned = teams.reduce((sum, t) => sum + t.have + t.duplicate, 0);
+  const totalStickers = teams.reduce((sum, t) => sum + t.total, 0);
+  const totalMissing = teams.reduce((sum, t) => sum + t.missing, 0);
+  const totalDuplicates = teams.reduce((sum, t) => sum + t.duplicate, 0);
 
   return (
     <div>
-      <h1 className="text-2xl font-extrabold">המדבקות שלי</h1>
-      <p className="mb-6 text-sm text-foreground/60">
-        {settings.set_name} · {settings.total_stickers} מדבקות בסדרה
-      </p>
-
-      <div className="mb-5 flex gap-2 rounded-xl bg-black/5 p-1">
-        <TabLink href="/dashboard/stickers?tab=duplicates" active={activeTab === "duplicates"}>
-          🔁 הקלפים שיש לי להחלפה ({duplicates.length})
-        </TabLink>
-        <TabLink href="/dashboard/stickers?tab=missing" active={activeTab === "missing"}>
-          📋 הקלפים שחסרים לי ({missing.length})
-        </TabLink>
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-extrabold">האוסף שלי 📖</h1>
+          <p className="text-sm text-foreground/60">
+            {settings.set_name} · {totalOwned}/{totalStickers} מדבקות
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/dashboard/stickers/marketplace"
+            className="rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-bold text-foreground/70 transition hover:bg-black/5"
+          >
+            🔁 הכפולים שלי ({totalDuplicates})
+          </Link>
+          <Link
+            href="/dashboard/scanner"
+            className="rounded-xl bg-brand px-4 py-2 text-sm font-bold text-white transition hover:bg-brand-dark"
+          >
+            🤖 סריקת מדבקות
+          </Link>
+        </div>
       </div>
 
-      <Card>
-        {activeTab === "duplicates" ? (
-          <>
-            <h2 className="mb-3 text-lg font-bold">הוספת מדבקות כפולות</h2>
-            <BulkStickerForm
-              action={bulkAddDuplicatesAction}
-              showListingType
-              placeholder="לדוגמה: 1-20, 34, 56-60"
-            />
-            <DuplicateList items={duplicates} />
-          </>
-        ) : (
-          <>
-            <h2 className="mb-3 text-lg font-bold">הוספת מדבקות חסרות</h2>
-            <BulkStickerForm action={bulkAddMissingAction} placeholder="לדוגמה: 1-20, 34, 56-60" />
-            <MissingList items={missing} />
-          </>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-function TabLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className={cn(
-        "flex-1 rounded-lg px-3 py-2.5 text-center text-sm font-bold transition",
-        active ? "bg-white text-brand-dark shadow-sm" : "text-foreground/60 hover:text-foreground"
+      {totalOwned === 0 && (
+        <Card className="mb-5 border-brand/20 bg-brand/5">
+          <p className="font-bold text-brand-dark">👋 בחרו נבחרת כדי להתחיל!</p>
+          <p className="mt-1 text-sm text-foreground/70">
+            הקישו על כרטיס נבחרת כדי לפתוח את רשת המדבקות שלה ולסמן מה יש לכם - או נסו את{" "}
+            <Link href="/dashboard/scanner" className="font-bold text-brand-dark underline">
+              סורק ה-AI
+            </Link>{" "}
+            כדי לסמן הרבה מדבקות בבת אחת.
+          </p>
+        </Card>
       )}
-    >
-      {children}
-    </Link>
+
+      {totalMissing > 0 && (
+        <p className="mb-4 text-sm font-medium text-foreground/60">
+          חסרות לכם <span className="font-bold text-red-600">{totalMissing}</span> מדבקות באלבום -{" "}
+          <Link href="/dashboard/matches" className="font-bold text-brand-dark underline">
+            חפשו התאמות
+          </Link>
+        </p>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+        {teams.map((team) => (
+          <TeamCard key={team.code} team={team} />
+        ))}
+      </div>
+    </div>
   );
 }
