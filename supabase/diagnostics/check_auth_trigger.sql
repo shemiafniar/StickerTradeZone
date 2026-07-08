@@ -70,6 +70,41 @@ where table_schema = 'public'
   and is_nullable = 'no'
   and column_default is null;
 
+-- 4b) Schema-drift check: this exact query caught a real production bug
+--     (SQLSTATE 42703: column "whatsapp_phone" of relation "profile_contacts"
+--     does not exist - fixed in 0010_reconcile_profile_contacts.sql). It
+--     flags any column on profiles/profile_contacts that this repo's
+--     migrations don't know about (leftover from a schema that predates or
+--     diverges from this migration history), and any *expected* column
+--     that's missing. Both are equally dangerous - the trigger function
+--     and the live table must agree exactly.
+with expected(table_name, column_name) as (
+  values
+    ('profiles', 'id'), ('profiles', 'full_name'), ('profiles', 'city'),
+    ('profiles', 'neighborhood'), ('profiles', 'role'), ('profiles', 'status'),
+    ('profiles', 'location_enabled'), ('profiles', 'created_at'), ('profiles', 'updated_at'),
+    ('profile_contacts', 'user_id'), ('profile_contacts', 'phone'),
+    ('profile_contacts', 'whatsapp'), ('profile_contacts', 'created_at'),
+    ('profile_contacts', 'updated_at')
+),
+actual as (
+  select table_name, column_name
+  from information_schema.columns
+  where table_schema = 'public' and table_name in ('profiles', 'profile_contacts')
+)
+select
+  coalesce(e.table_name, a.table_name) as table_name,
+  coalesce(e.column_name, a.column_name) as column_name,
+  case
+    when e.column_name is null then 'UNEXPECTED - not used by this repo''s migrations, likely legacy drift'
+    when a.column_name is null then 'MISSING - this repo''s handle_new_user() expects this column to exist'
+    else 'ok'
+  end as status
+from expected e
+full outer join actual a on a.table_name = e.table_name and a.column_name = e.column_name
+where e.column_name is null or a.column_name is null
+order by 1, 2;
+
 -- 5) Grants supabase_auth_admin actually has on the two tables (belt-and-
 --    suspenders grants were added in migration 0009_auth_trigger_resilience.sql -
 --    if this project predates that migration, re-run it).
@@ -96,4 +131,11 @@ select * from public.admin_logs order by created_at desc limit 20;
 -- That message tells you exactly which constraint/permission/column is the
 -- real root cause - paste it into a new migration fixing that specific
 -- issue, or open an issue with that exact text.
+--
+-- Real-world example already fixed by this process: a project's Postgres
+-- logs showed `SQLSTATE 42703: column "whatsapp_phone" of relation
+-- "profile_contacts" does not exist` - query 4b above would have flagged
+-- both the unexpected legacy reference and the missing `whatsapp` column
+-- immediately. Fixed in 0010_reconcile_profile_contacts.sql, which is safe
+-- to (re-)run on any project regardless of which of these states it's in.
 -- =========================================================================
