@@ -10,7 +10,7 @@ export async function SiteHeader() {
 
   const loggedInItems: NavItem[] = [
     { href: "/dashboard", label: "לוח בקרה" },
-    { href: "/dashboard/stickers", label: "המדבקות שלי" },
+    { href: "/dashboard/stickers", label: "האוסף שלי" },
     { href: "/dashboard/scanner", label: "סורק AI" },
     { href: "/dashboard/matches", label: "התאמות" },
     { href: "/dashboard/trades", label: "טריידים" },
@@ -40,7 +40,7 @@ export async function SiteHeader() {
             ⚽
           </span>
           <span className="text-lg text-foreground">
-            Sticker Trade <span className="text-brand-dark">IL</span>
+            <span className="text-brand-dark">שאשות</span> Shashot
           </span>
         </Link>
 

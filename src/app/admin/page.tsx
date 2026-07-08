@@ -1,7 +1,7 @@
 import { getAdminStats } from "@/lib/data/admin";
 import { Card } from "@/components/ui/Card";
 
-export const metadata = { title: "אזור ניהול | Sticker Trade IL" };
+export const metadata = { title: "אזור ניהול | Shashot" };
 
 export default async function AdminOverviewPage() {
   const stats = await getAdminStats();

@@ -4,7 +4,7 @@ import { getUnreadMessageCounts } from "@/lib/data/chat";
 import { Card } from "@/components/ui/Card";
 import { TradeStatusBadge } from "@/components/ui/Badge";
 
-export const metadata = { title: "טריידים | Sticker Trade IL" };
+export const metadata = { title: "טריידים | Shashot" };
 
 export default async function TradesPage() {
   const [trades, unreadCounts] = await Promise.all([

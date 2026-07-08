@@ -10,7 +10,7 @@ export function SiteFooter() {
           any official sticker brand.
         </p>
         <p className="text-xs text-foreground/40">
-          © {new Date().getFullYear()} Sticker Trade IL - קהילת אספני מדבקות כדורגל בישראל
+          © {new Date().getFullYear()} Shashot - קהילת אספני מדבקות כדורגל בישראל
         </p>
       </div>
     </footer>

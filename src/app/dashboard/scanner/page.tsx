@@ -1,6 +1,6 @@
 import { ScannerApp } from "@/components/scanner/ScannerApp";
 
-export const metadata = { title: "סורק AI | Sticker Trade IL" };
+export const metadata = { title: "סורק AI | Shashot" };
 
 export default function ScannerPage() {
   return (
