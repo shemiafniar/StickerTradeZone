@@ -31,6 +31,14 @@ function metadataString(user: User, key: string): string {
 async function ensureProfileExists(supabase: SupabaseClient<Database>, user: User): Promise<Profile | null> {
   const phone = metadataString(user, "phone") || null;
 
+  // Mirrors handle_new_user()'s "first signup becomes admin" bootstrap
+  // logic (see supabase/migrations/0008_bootstrap.sql), so that guarantee
+  // still holds even when this self-heal path is the one creating the very
+  // first profile (e.g. the trigger failed and logged a warning instead -
+  // see 0009_auth_trigger_resilience.sql).
+  const { count } = await supabase.from("profiles").select("id", { count: "exact", head: true });
+  const isFirstUser = (count ?? 0) === 0;
+
   await supabase
     .from("profiles")
     .upsert(
@@ -39,6 +47,7 @@ async function ensureProfileExists(supabase: SupabaseClient<Database>, user: Use
         full_name: metadataString(user, "full_name"),
         city: metadataString(user, "city"),
         neighborhood: metadataString(user, "neighborhood") || null,
+        role: isFirstUser ? "admin" : "user",
       },
       { onConflict: "id", ignoreDuplicates: true }
     );
