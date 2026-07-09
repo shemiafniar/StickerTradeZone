@@ -11,7 +11,6 @@ export async function SiteHeader() {
   const loggedInItems: NavItem[] = [
     { href: "/dashboard", label: "לוח בקרה" },
     { href: "/dashboard/stickers", label: "האוסף שלי" },
-    { href: "/dashboard/scanner", label: "סורק AI" },
     { href: "/dashboard/matches", label: "התאמות" },
     { href: "/dashboard/trades", label: "טריידים" },
     { href: "/dashboard/profile", label: "פרופיל" },
