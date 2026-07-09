@@ -2,15 +2,18 @@ import Link from "next/link";
 import { cn } from "@/lib/cn";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type Variant = "primary" | "secondary" | "outline" | "danger" | "ghost";
-type Size = "sm" | "md" | "lg";
+export type Variant = "primary" | "secondary" | "outline" | "danger" | "ghost" | "light";
+export type Size = "sm" | "md" | "lg";
 
 const variantClasses: Record<Variant, string> = {
-  primary: "bg-brand text-white hover:bg-brand-dark shadow-sm",
-  secondary: "bg-accent text-foreground hover:brightness-95 shadow-sm",
-  outline: "border border-black/15 text-foreground hover:bg-black/5",
+  primary: "bg-brand text-white shadow-sm hover:bg-brand-dark hover:shadow-md",
+  secondary: "bg-brand-blue text-white shadow-sm hover:bg-brand-blue-dark hover:shadow-md",
+  outline: "border border-black/15 text-foreground hover:border-brand-dark/30 hover:bg-brand/5 hover:text-brand-dark",
   danger: "bg-red-600 text-white hover:bg-red-700",
   ghost: "text-foreground/70 hover:bg-black/5",
+  // For use on a colored/gradient background (e.g. the closing CTA section)
+  // where a solid brand-colored button wouldn't have enough contrast.
+  light: "bg-white text-brand-dark shadow-sm hover:bg-white/90 hover:shadow-md",
 };
 
 const sizeClasses: Record<Size, string> = {

@@ -17,12 +17,12 @@ export function SummaryCard({
   const accentClasses = {
     green: "bg-brand/10 text-brand-dark",
     orange: "bg-accent/20 text-orange-700",
-    blue: "bg-blue-100 text-blue-700",
+    blue: "bg-brand-blue/10 text-brand-blue",
   }[accent];
 
   return (
     <Link href={href}>
-      <Card className="transition hover:-translate-y-0.5 hover:shadow-md">
+      <Card interactive>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-foreground/60">{label}</p>

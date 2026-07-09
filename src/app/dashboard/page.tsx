@@ -9,7 +9,7 @@ import { TradeStatusBadge } from "@/components/ui/Badge";
 import { ShareCard } from "@/components/share/ShareCard";
 import Link from "next/link";
 
-export const metadata = { title: "לוח בקרה | Shashot" };
+export const metadata = { title: "לוח בקרה" };
 
 export default async function DashboardPage() {
   const profile = await getCurrentProfile();
@@ -111,7 +111,7 @@ export default async function DashboardPage() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {recentTrades.map((trade) => (
               <Link key={trade.id} href={`/dashboard/trades/${trade.id}`}>
-                <Card className="transition hover:-translate-y-0.5 hover:shadow-md">
+                <Card interactive>
                   <div className="flex items-center justify-between">
                     <p className="font-bold">{trade.otherUser?.full_name ?? "אספן"}</p>
                     <TradeStatusBadge status={trade.status} />
