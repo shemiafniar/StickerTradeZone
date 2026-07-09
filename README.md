@@ -97,6 +97,66 @@ bootstrap passes.
 - **Viral sharing** - native share sheet (where supported), a WhatsApp share link, and a "copy
   link" button, using the product's suggested Hebrew invite text.
 
+## Brand assets
+
+The finalized Shashot identity (a stylized "5"/card/soccer-ball mark in Primary Green + Primary
+Blue, paired with a "SHASHOT" wordmark in Dark Navy) lives in `public/branding/`:
+
+```
+public/branding/
+  logo-icon.png           Icon-only mark, transparent - used above the landing page's headline,
+                             and as the source for the footer's small icon
+  logo-horizontal.png      Icon + wordmark (no tagline), transparent - the header logo, sized to
+                             ~44px tall so it fits the existing navbar height unchanged
+  logo-horizontal-full.png  Icon + wordmark + "TRADE · CONNECT · COLLECT" tagline, transparent -
+                             for larger contexts than the header allows (currently unused, kept for
+                             future marketing pages/docs)
+  app-icon-512.png         Icon mark on a rounded Dark Navy square, 512x512 - the source used to
+                             build favicon.ico and apple-touch-icon.png
+  apple-touch-icon.png     180x180, opaque (per Apple's guidance - no transparency), copied to
+                             src/app/apple-icon.png for Next.js's file-based icon convention
+  favicon.ico              16/32/48px multi-resolution, copied to src/app/favicon.ico for the same
+                             file-based convention (see below)
+```
+
+**Why two copies of the favicon/apple icon?** Next.js's App Router auto-detects and serves
+`src/app/favicon.ico` and `src/app/apple-icon.png` with zero configuration - no `metadata.icons`
+needed, and critically, no risk of emitting a second, conflicting `<link rel="icon">` tag (which is
+exactly what happened when this repo's original placeholder `src/app/favicon.ico` and a manually-set
+`metadata.icons` entry were both present at once during this change - fixed by making
+`public/branding/` the canonical source and copying from it into the two `src/app/` convention
+files, so there's exactly one favicon and one apple-touch-icon link in the rendered `<head>`).
+
+**Color palette** (`src/app/globals.css`):
+
+| Variable | Hex | Tailwind utilities | Used for |
+| --- | --- | --- | --- |
+| `--brand` (Primary Green) | `#10b872` | `bg-brand`, `text-brand`, `border-brand` | Primary buttons, active nav, primary badges/links, progress bars |
+| `--brand-dark` | `#0a8f5a` | `bg-brand-dark`, `text-brand-dark` | Hover/active state for the above, and most link text |
+| `--brand-blue` (Primary Blue) | `#0d84f2` | `bg-brand-blue`, `text-brand-blue` | Secondary buttons, secondary badges/stat tiles, icons |
+| `--brand-blue-dark` | `#0a66c2` | `bg-brand-blue-dark` | Hover/active state for secondary buttons |
+| `--brand-navy` (Dark Navy) | `#101c34` | `bg-brand-navy`, `text-brand-navy` | The app-icon background, the admin "role" badge, decorative dark accents |
+| `--foreground` | `#14213d` | `text-foreground`, `bg-foreground` | Body text (already a dark navy tone - kept separate from `--brand-navy` so a future brand-navy tweak can't accidentally shift every line of body copy on the site) |
+
+These are additive to the existing palette (`--accent` for marketplace "sale" indicators and
+`--background` are unchanged) - see the inline comment in `globals.css` for the full rationale.
+`sticker` status colors (gray/green/blue/red in the collection grid - see
+[Visual collection model](#visual-collection-model-teams--sticker-codes)) are a **separate,
+functional** color-coding system and were deliberately left untouched by this pass; only the
+*decorative*/branding use of blue (secondary buttons, stat tiles, admin badges) was aligned to the
+new `--brand-blue`.
+
+**Where the logo appears**: the header (`SiteHeader.tsx`, `logo-horizontal.png` at a fixed 44px
+height - the navbar itself is still `h-16` (64px), unchanged), the landing page hero
+(`src/app/page.tsx`, `logo-icon.png` above the headline with a soft decorative blurred glow behind
+it), and the footer (`SiteFooter.tsx`, a small `logo-icon.png`).
+
+**If real vector (SVG) exports become available later**: drop `logo-icon.svg` and
+`logo-horizontal.svg` into `public/branding/`, then update the three `<Image src="/branding/...">`
+references above (in `SiteHeader.tsx`, `page.tsx`, and `SiteFooter.tsx`) to point at the `.svg`
+files instead of `.png` - everything else (sizing, layout, the favicon/apple-icon pipeline) stays
+the same.
+
 ## Project structure
 
 ```
@@ -1146,6 +1206,17 @@ third-party share sheets) can't be fully exercised in CI:
       updates correctly afterward and that a deleted trade's chat messages are gone too
 - [ ] On `/admin/statistics`, confirm the sticker/trader rankings and the two 14-day charts show
       real numbers that change after you create new test data (not the same numbers every time)
+- [ ] Confirm the header logo renders at ~44px tall without changing the navbar's height, on both
+      desktop and mobile, and that the current page's nav link is visibly highlighted (desktop and
+      mobile menu both)
+- [ ] On the landing page, confirm the icon-only logo appears above the headline with its soft
+      background glow, and that the closing CTA section's green-to-blue gradient and white button
+      are both legible
+- [ ] Check the browser tab: confirm the favicon is the new branded icon (not a generic default),
+      and that the tab title matches the current page (e.g. "ניהול משתמשים | Shashot", not a
+      double `"... | Shashot | Shashot"` suffix)
+- [ ] On iOS Safari, "Add to Home Screen" and confirm the new dark-navy app icon is used (not a
+      screenshot thumbnail)
 
 **Security spot-checks** (safe to do with two browser profiles / incognito windows)
 
@@ -1191,6 +1262,16 @@ third-party share sheets) can't be fully exercised in CI:
 
 ## Known limitations / TODOs for future releases
 
+- **The current `public/branding/` PNGs are a close recreation of the finalized logo, not an export
+  of the original source file.** The design tool available in this environment couldn't ingest the
+  brand assets provided as chat attachments directly (no way to save an inline chat image to disk
+  as a usable file); the icon mark and horizontal lockup were regenerated to match the provided
+  logo and style-guide mockup as closely as possible (same "5"/card/soccer-ball icon, same
+  green→blue gradient, same "SHASHOT" wordmark treatment), then background-removed and processed
+  into the final asset set. If pixel-perfect original files (ideally real `.svg` vectors) become
+  available, drop them into `public/branding/` under the same filenames (or `.svg` - see
+  [Brand assets](#brand-assets) above for exactly which files to replace) and re-derive
+  `favicon.ico`/`apple-icon.png`/the two `src/app/` convention copies from the new source.
 - **The matches map has no marker clustering yet.** At country-wide zoom, two collectors only a few
   km apart can render with visually overlapping markers. The implementation is deliberately modular
   for this (see [Matches map](#matches-map-leaflet--openstreetmap)) - adding
