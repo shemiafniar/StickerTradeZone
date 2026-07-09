@@ -15,6 +15,9 @@ export interface MatchCandidateInput {
   missingCodes: string[];
   /** precomputed distance in km from the current user, if both share location, else null */
   distanceKm: number | null;
+  /** privacy-preserving jittered coordinates for the map view, if the candidate shares a location, else null */
+  approxLat: number | null;
+  approxLng: number | null;
 }
 
 export interface MatchResult {
@@ -31,6 +34,9 @@ export interface MatchResult {
   score: number;
   locationRank: 0 | 1 | 2;
   distanceKm: number | null;
+  /** privacy-preserving jittered coordinates for the map view, if this candidate shares a location, else null */
+  approxLat: number | null;
+  approxLng: number | null;
 }
 
 /**
@@ -75,6 +81,8 @@ export function computeMatches(
       score,
       locationRank: getLocationRank(myCity, candidate.city),
       distanceKm: candidate.distanceKm,
+      approxLat: candidate.approxLat,
+      approxLng: candidate.approxLng,
     });
   }
 
