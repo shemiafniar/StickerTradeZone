@@ -25,6 +25,9 @@ bootstrap passes.
 - Hebrew RTL UI (`Heebo` font), mobile-first design
 - Real national flags via [`flag-icons`](https://github.com/lipis/flag-icons) (SVG, not Unicode emoji
   - see [Visual collection model](#visual-collection-model-teams--sticker-codes))
+- Interactive matches map: [Leaflet](https://leafletjs.com/) + [OpenStreetMap](https://www.openstreetmap.org/)
+  tiles (free, no API key) via [`react-leaflet`](https://react-leaflet.js.org/) - see
+  [Matches map](#matches-map-leaflet--openstreetmap)
 - Pluggable Vision/OCR provider for the AI Sticker Scanner (mock by default, OpenAI Vision ready to
   enable)
 
@@ -63,6 +66,13 @@ bootstrap passes.
   ~100m before it ever leaves the device) powers real distance sorting ("500 מ׳" / "2.3 ק״מ"),
   with city/region matching kept as an automatic fallback for anyone who hasn't enabled it. Exact
   coordinates are never exposed to other users - see [Location privacy](#location-privacy) below.
+- **Interactive matches map** - `/dashboard/matches` has a "מפה"/"רשימה" toggle; the map (Leaflet +
+  OpenStreetMap, centered on Israel) plots a marker per nearby matching collector who's opted into
+  location, using the same further-jittered approximate coordinates described in
+  [Location privacy](#location-privacy) - clicking a marker shows a popup with the same information
+  as a match card (name, city, distance, give/receive counts, top sticker codes, and a "שלח בקשת
+  טרייד" button). The list view is never removed - it's one tab away, and is what's shown by default
+  for anyone without location enabled.
 - **Trade chat** - each trade request has a private, realtime 1:1 conversation (`trade_messages`),
   visible only to its two participants, with unread badges and auto-scroll.
 - **Notifications** - a bell with a live unread badge, dropdown, and full history page. Notifications
@@ -86,7 +96,8 @@ src/
   components/
     ui/                    Shared primitives (Button, Card, Field, Skeleton, ...)
     collection/            TeamCard, StickerGrid (tap-to-cycle grid), ColorLegend, DuplicateListingChip
-    auth/ matches/ trades/ admin/ profile/  Feature UI
+    auth/ trades/ admin/ profile/  Feature UI
+    matches/                MatchCard, MatchesView (map/list toggle), MatchesMap (Leaflet, client-only)
     location/              Location opt-in/opt-out toggle
     notifications/         Notification bell + history list
     scanner/                AI Scanner upload/review UI (sticker-back detection)
@@ -124,6 +135,8 @@ supabase/
                                         unified user_stickers (4-state) table - see below
   migrations/0012_worldcup2026_teams.sql  Official 48-team FIFA World Cup 2026 roster + real
                                         flag_icon column, replacing 0011's placeholder 32-team list
+  migrations/0013_matches_map.sql    nearby_locations() RPC - jittered approximate coordinates
+                                        for the matches map, alongside the same real distance
   diagnostics/check_auth_trigger.sql Read-only script to debug "Database error saving new user"
   seed.sql                           Local-dev-only seed data (demo users + collections + trades + chat)
 ```
@@ -427,9 +440,20 @@ If Google isn't enabled yet, clicking the button shows a clear Hebrew error
 The same pattern protects location data, one level stricter: coordinates live in
 `profile_locations`, readable **only by their owner (or an admin)** - not even a confirmed trade
 partner can select another user's raw latitude/longitude. The only way anyone learns anything about
-another collector's location is the `nearby_distances()` SQL function, which is `SECURITY DEFINER`
-and returns just a rounded distance in km for the *caller* relative to everyone else - never
-coordinates. On top of that:
+another collector's location is through two `SECURITY DEFINER` SQL functions, neither of which ever
+returns raw coordinates:
+
+- `nearby_distances()` - a rounded distance in km for the *caller* relative to everyone else (used
+  for the "500 מ׳" / "2.3 ק״מ" badges and distance-based sort order).
+- `nearby_locations()` (`0013_matches_map.sql`) - returns the same real distance, **plus** a further
+  jittered approximate coordinate used only to place a marker on the matches map. The jitter (up to
+  ~2km, deterministic per target user via a stable hash of their `user_id` - see the migration for
+  the exact formula) is applied *in addition to* the ~100m client-side rounding below, specifically
+  because a map marker is more visually revealing than a distance number - "2.3 ק״מ" doesn't pinpoint
+  a location on a visual map the way an unjittered marker would. The true, unjittered distance is
+  still what's shown as text and used for sorting - only the *marker position* is approximate.
+
+On top of that:
 
 - The browser rounds coordinates to 3 decimal places (~100m) *before* sending them to the server
   (`roundCoordinate()` in `src/lib/distance.ts`), and the server rounds again defensively.
@@ -437,7 +461,8 @@ coordinates. On top of that:
   disabled at any time, which deletes the stored row entirely (`disable_my_location()`), not just
   hides it.
 - Users without a stored location automatically fall back to city/region-based ranking - nothing
-  breaks or requires location to be useful.
+  breaks or requires location to be useful. On the matches map specifically, a collector without a
+  location is kept in the list view but simply never gets a marker.
 
 ### Suspended users are blocked at the database level
 
@@ -481,10 +506,35 @@ notification-creation logic already lives in one place (`create_notification()` 
 
 City-based "nearby" matching originally lived entirely behind `getLocationRank()` in
 `src/lib/cities.ts`. That seam is exactly where real distance was plugged in: `computeMatches()` in
-`src/lib/matching.ts` now prefers a precomputed `distanceKm` (from `nearby_distances()`) per
+`src/lib/matching.ts` now prefers a precomputed `distanceKm` (from `nearby_locations()`) per
 candidate and only falls back to `getLocationRank()` when no shared location exists - so a future
-change to how distance is computed (e.g. a fancier geo index) only touches `nearby_distances()` and
+change to how distance is computed (e.g. a fancier geo index) only touches `nearby_locations()` and
 `src/lib/data/matches.ts`, never the UI.
+
+### Matches map (Leaflet + OpenStreetMap)
+
+- **No paid provider**: [Leaflet](https://leafletjs.com/) + [OpenStreetMap](https://www.openstreetmap.org/)
+  tiles - free, no API key, no billing account to set up. `MatchesMap.tsx` renders a `TileLayer`
+  pointed at the standard `tile.openstreetmap.org` server with the required attribution link.
+- **Client-only, by necessity**: Leaflet reads `window`/`document` at import time, which breaks
+  Next.js's default server-side render. `MatchesView.tsx` loads `MatchesMap` via
+  `next/dynamic(..., { ssr: false })` - the `"use client"` directive on the map component alone is
+  *not* sufficient, since Next still server-renders client components on the first pass; `ssr: false`
+  is what actually skips that. Leaflet's own CSS (`leaflet/dist/leaflet.css`, required for the map to
+  render at all - without it, tiles/markers are correctly positioned in the DOM but visually broken)
+  is imported once in `globals.css`, the same pattern already used for `flag-icons`.
+- **Custom marker icons, not Leaflet's default images**: Leaflet's default marker relies on relative
+  image paths that are a well-known source of "broken marker icon" bugs in bundled (webpack/Turbopack)
+  apps. `MatchesMap.tsx` sidesteps this entirely with a `L.divIcon()` - plain HTML/CSS (a colored pin
+  with a small badge showing the match count), styled in `globals.css` (`.matches-map-marker`), no
+  image assets involved.
+- **Modular by design, for clustering later**: markers are rendered as a plain `.map()` over
+  `MapMatch[]` directly inside `<MapContainer>` - adding marker clustering later (e.g.
+  [`react-leaflet-cluster`](https://www.npmjs.com/package/react-leaflet-cluster)) is a matter of
+  wrapping that `.map()` output in a `<MarkerClusterGroup>`, no other change needed.
+- **Tab default**: `MatchesView.tsx` initializes its `view` state to `"map"` when the current user has
+  location enabled, `"list"` otherwise (per the product requirement) - this is a one-time default,
+  not re-evaluated on every render, so switching tabs manually always sticks for the rest of the visit.
 
 ### Swapping the AI Scanner's Vision provider
 
@@ -549,12 +599,12 @@ npx supabase link --project-ref <your-project-ref>
 
 # 1. Get production's public schema in sync RIGHT NOW (unblocks the app immediately):
 #    copy the full contents of supabase/migrations/0011_shashot_teams.sql, then
-#    supabase/migrations/0012_worldcup2026_teams.sql, into the Supabase Dashboard ->
-#    SQL Editor and run each, in that order, if you haven't already.
+#    0012_worldcup2026_teams.sql, then 0013_matches_map.sql, into the Supabase
+#    Dashboard -> SQL Editor and run each, in that order, if you haven't already.
 
-# 2. Tell Supabase's tracking table that 0001-0012 are already applied, so future
+# 2. Tell Supabase's tracking table that 0001-0013 are already applied, so future
 #    `db push` runs only ever apply what's genuinely new from here on:
-npx supabase migration repair --status applied 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012
+npx supabase migration repair --status applied 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013
 
 # 3. Confirm local and remote agree before trusting CI with it:
 npx supabase migration list
@@ -614,8 +664,9 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 10. `supabase/migrations/0010_reconcile_profile_contacts.sql`
 11. `supabase/migrations/0011_shashot_teams.sql`
 12. `supabase/migrations/0012_worldcup2026_teams.sql`
+13. `supabase/migrations/0013_matches_map.sql`
 
-All 12 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 13 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
 inserts/updates are required, including for your first admin account (see step 4) or the sticker
@@ -733,7 +784,7 @@ system automatically generates that team's 20 stickers (`CODE-1` through `CODE-2
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 12 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 13 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`) to get the initial schema in place. Do **not** run `seed.sql`
    against it (it has a built-in guard that refuses to run if it detects any non-demo account already
    exists, but the safest rule is simply: don't run it against a hosted project at all).
@@ -766,7 +817,7 @@ visits or manual profile/role edits, for this release or any future one.
 ### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 12 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+- ✅ All 13 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
   times, including a full clean-room run for this pass) with zero errors.
 - ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
   Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
@@ -852,7 +903,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] On a brand new Supabase project (only the 12 migrations run, no seed, no manual SQL), register
+- [ ] On a brand new Supabase project (only the 13 migrations run, no seed, no manual SQL), register
       the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
@@ -885,6 +936,14 @@ third-party share sheets) can't be fully exercised in CI:
 - [ ] Enable location from the profile page (grant the browser permission prompt) and confirm the
       matches page switches to distance-based sorting; disable it again and confirm it falls back to
       city-based sorting
+- [ ] On `/dashboard/matches` with location enabled, confirm the "מפה" tab is selected by default and
+      shows a map centered on Israel with a marker per nearby matching collector who has location
+      enabled; click a marker and confirm the popup shows name, city, distance, give/receive counts,
+      top sticker codes, and a working "שלח בקשת טרייד" button; switch to "רשימה" and confirm the
+      existing card list still works unchanged
+- [ ] With location disabled, confirm `/dashboard/matches` defaults to the "רשימה" tab, and that
+      clicking "מפה" shows the "כדי לראות התאמות על המפה, הפעל מיקום בפרופיל" prompt instead of an
+      empty/broken map
 - [ ] Find a match and send a trade request with suggested give/receive stickers
 - [ ] As the recipient, accept one trade request and decline another; confirm contact info appears
       only after acceptance
@@ -915,7 +974,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 12 migrations in order, confirm no errors, do **not** run
+- [ ] Fresh Supabase project: run all 13 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
 - [ ] `select count(*) from public.teams;` returns exactly 48, and "האוסף שלי" shows 48 team cards,
@@ -942,6 +1001,13 @@ third-party share sheets) can't be fully exercised in CI:
 
 ## Known limitations / TODOs for future releases
 
+- **The matches map has no marker clustering yet.** At country-wide zoom, two collectors only a few
+  km apart can render with visually overlapping markers. The implementation is deliberately modular
+  for this (see [Matches map](#matches-map-leaflet--openstreetmap)) - adding
+  `react-leaflet-cluster` (or similar) is a follow-up, not a redesign.
+- **Map marker jitter is a fixed ~2km, not distance-adaptive.** This is a reasonable default for a
+  country-scale view; a future refinement could scale the jitter radius with local marker density
+  (more jitter in dense cities, less in sparse areas) for a better privacy/usefulness trade-off.
 - **`.github/workflows/database.yml` requires a one-time manual setup** (3 GitHub Actions secrets +
   one `supabase migration repair` command - see
   [Automated database migrations](#automated-database-migrations-cicd)) before it can deploy anything.
