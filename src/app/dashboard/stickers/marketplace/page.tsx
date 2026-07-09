@@ -4,7 +4,7 @@ import { getUserDuplicateListings } from "@/lib/data/collection";
 import { Card } from "@/components/ui/Card";
 import { DuplicateListingChip } from "@/components/collection/DuplicateListingChip";
 
-export const metadata = { title: "הכפולים שלי | Shashot" };
+export const metadata = { title: "הכפולים שלי" };
 
 export default async function MarketplacePage() {
   const profile = await getCurrentProfile();

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 
-export const metadata = { title: "ניהול משתמשים | Shashot" };
+export const metadata = { title: "ניהול משתמשים" };
 
 export default async function AdminUsersPage({
   searchParams,
@@ -50,7 +50,7 @@ export default async function AdminUsersPage({
                     {user.full_name || "(ללא שם)"}
                   </Link>
                   {user.role === "admin" && (
-                    <Badge className="mr-1.5 bg-purple-100 text-purple-700">מנהל</Badge>
+                    <Badge className="mr-1.5 bg-brand-navy/10 !text-brand-navy">מנהל</Badge>
                   )}
                 </td>
                 <td className="py-2.5 pl-2 text-foreground/70" dir="ltr">

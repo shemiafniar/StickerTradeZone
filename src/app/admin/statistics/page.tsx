@@ -2,7 +2,7 @@ import { getAdminStatistics } from "@/lib/data/admin";
 import { Card } from "@/components/ui/Card";
 import { StickerBarList, DailyBarChart } from "@/components/admin/StatCharts";
 
-export const metadata = { title: "סטטיסטיקות | Shashot" };
+export const metadata = { title: "סטטיסטיקות" };
 
 export default async function AdminStatisticsPage() {
   const stats = await getAdminStatistics();

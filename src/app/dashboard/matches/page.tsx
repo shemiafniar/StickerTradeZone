@@ -3,7 +3,7 @@ import { getMatchesForCurrentUser } from "@/lib/data/matches";
 import { MatchesView } from "@/components/matches/MatchesView";
 import { Card } from "@/components/ui/Card";
 
-export const metadata = { title: "התאמות | Shashot" };
+export const metadata = { title: "התאמות" };
 
 export default async function MatchesPage() {
   const { matches, myCity, locationEnabled } = await getMatchesForCurrentUser();

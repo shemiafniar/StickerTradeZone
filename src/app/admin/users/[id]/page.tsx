@@ -8,7 +8,7 @@ import { SuspendUserButton } from "@/components/admin/SuspendUserButton";
 import { EditUserForm } from "@/components/admin/EditUserForm";
 import { DeleteUserButton } from "@/components/admin/DeleteUserButton";
 
-export const metadata = { title: "פרופיל משתמש | Shashot" };
+export const metadata = { title: "פרופיל משתמש" };
 
 export default async function AdminUserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -27,7 +27,7 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-extrabold">{user.full_name || "(ללא שם)"}</h1>
-            {user.role === "admin" && <Badge className="bg-purple-100 text-purple-700">מנהל</Badge>}
+            {user.role === "admin" && <Badge className="bg-brand-navy/10 !text-brand-navy">מנהל</Badge>}
             {user.status === "suspended" ? (
               <Badge className="bg-red-100 text-red-700">מושעה</Badge>
             ) : (

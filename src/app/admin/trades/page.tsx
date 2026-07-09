@@ -5,7 +5,7 @@ import { TradeStatusBadge } from "@/components/ui/Badge";
 import { AdminTradeActions } from "@/components/admin/AdminTradeActions";
 import { formatStickerCodesByTeam } from "@/lib/stickerCodes";
 
-export const metadata = { title: "ניהול טריידים | Shashot" };
+export const metadata = { title: "ניהול טריידים" };
 
 export default async function AdminTradesPage() {
   const trades = await getAdminTrades();

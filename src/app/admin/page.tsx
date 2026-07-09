@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getAdminStats } from "@/lib/data/admin";
 import { Card } from "@/components/ui/Card";
 
-export const metadata = { title: "אזור ניהול | Shashot" };
+export const metadata = { title: "אזור ניהול" };
 
 export default async function AdminOverviewPage() {
   const stats = await getAdminStats();
@@ -33,21 +33,21 @@ export default async function AdminOverviewPage() {
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Link href="/admin/users">
-          <Card className="transition hover:-translate-y-0.5 hover:shadow-md">
+          <Card interactive>
             <p className="text-2xl">👥</p>
             <p className="mt-1 font-bold">ניהול משתמשים</p>
             <p className="text-xs text-foreground/60">חיפוש, צפייה, עריכה, השעיה ומחיקה</p>
           </Card>
         </Link>
         <Link href="/admin/trades">
-          <Card className="transition hover:-translate-y-0.5 hover:shadow-md">
+          <Card interactive>
             <p className="text-2xl">🤝</p>
             <p className="mt-1 font-bold">ניהול טריידים</p>
             <p className="text-xs text-foreground/60">צפייה בכל הטריידים במערכת, ביטול/השלמה/מחיקה</p>
           </Card>
         </Link>
         <Link href="/admin/statistics">
-          <Card className="transition hover:-translate-y-0.5 hover:shadow-md">
+          <Card interactive>
             <p className="text-2xl">📊</p>
             <p className="mt-1 font-bold">סטטיסטיקות</p>
             <p className="text-xs text-foreground/60">מדבקות מבוקשות, אספנים פעילים, צמיחה</p>
