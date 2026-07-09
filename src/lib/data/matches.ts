@@ -15,12 +15,12 @@ export async function getMatchesForCurrentUser(): Promise<{
 
   if (!user) return { matches: [], myCity: "", locationEnabled: false };
 
-  const [profileRes, myProfileRes, userStickersRes, idToCode, distancesRes] = await Promise.all([
+  const [profileRes, myProfileRes, userStickersRes, idToCode, locationsRes] = await Promise.all([
     supabase.from("profiles").select("*").eq("status", "active"),
     supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
     supabase.from("user_stickers").select("*").in("status", ["duplicate", "missing"]),
     getStickerIdToCodeMap(),
-    supabase.rpc("nearby_distances", { max_km: 300 }),
+    supabase.rpc("nearby_locations", { max_km: 300 }),
   ]);
 
   const myProfile = myProfileRes.data as Profile | null;
@@ -28,11 +28,15 @@ export async function getMatchesForCurrentUser(): Promise<{
 
   const profiles = ((profileRes.data as Profile[]) ?? []).filter((p) => p.id !== user.id);
   const allUserStickers = (userStickersRes.data as UserSticker[]) ?? [];
-  const distanceByUserId = new Map<string, number>(
-    ((distancesRes.data as { user_id: string; distance_km: number }[] | null) ?? []).map((d) => [
-      d.user_id,
-      d.distance_km,
-    ])
+  const locationByUserId = new Map<
+    string,
+    { distanceKm: number; approxLat: number; approxLng: number }
+  >(
+    (
+      (locationsRes.data as
+        | { user_id: string; distance_km: number; approx_lat: number; approx_lng: number }[]
+        | null) ?? []
+    ).map((d) => [d.user_id, { distanceKm: d.distance_km, approxLat: d.approx_lat, approxLng: d.approx_lng }])
   );
 
   const myDuplicateCodes = allUserStickers
@@ -75,7 +79,9 @@ export async function getMatchesForCurrentUser(): Promise<{
         .filter(Boolean),
       priceByCode,
       missingCodes: theirMissing.map((m) => idToCode.get(m.sticker_id) ?? "").filter(Boolean),
-      distanceKm: distanceByUserId.get(p.id) ?? null,
+      distanceKm: locationByUserId.get(p.id)?.distanceKm ?? null,
+      approxLat: locationByUserId.get(p.id)?.approxLat ?? null,
+      approxLng: locationByUserId.get(p.id)?.approxLng ?? null,
     };
   });
 

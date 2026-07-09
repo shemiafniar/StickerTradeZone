@@ -247,6 +247,10 @@ export type Database = {
         Args: { max_km?: number };
         Returns: { user_id: string; distance_km: number }[];
       };
+      nearby_locations: {
+        Args: { max_km?: number };
+        Returns: { user_id: string; distance_km: number; approx_lat: number; approx_lng: number }[];
+      };
       disable_my_location: {
         Args: Record<string, never>;
         Returns: undefined;

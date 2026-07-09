@@ -12,6 +12,8 @@ function candidate(overrides: Partial<MatchCandidateInput>): MatchCandidateInput
     priceByCode: {},
     missingCodes: [],
     distanceKm: null,
+    approxLat: null,
+    approxLng: null,
     ...overrides,
   };
 }
