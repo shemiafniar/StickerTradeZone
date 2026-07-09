@@ -1,5 +1,15 @@
 import { getLocationRank } from "@/lib/cities";
 
+/**
+ * Where a match's approximate map coordinates came from, if at all:
+ * - "gps": the candidate opted into precise location (jittered server-side
+ *   by nearby_locations() - see MatchesMap.tsx's popup text for this case).
+ * - "city": the candidate has no GPS location, but their profile's city/
+ *   neighborhood resolved to an approximate city-center coordinate.
+ * - null: no usable location info at all - kept in the list, never plotted.
+ */
+export type MatchLocationSource = "gps" | "city" | null;
+
 export interface MatchCandidateInput {
   userId: string;
   fullName: string;
@@ -18,6 +28,7 @@ export interface MatchCandidateInput {
   /** privacy-preserving jittered coordinates for the map view, if the candidate shares a location, else null */
   approxLat: number | null;
   approxLng: number | null;
+  locationSource: MatchLocationSource;
 }
 
 export interface MatchResult {
@@ -37,6 +48,7 @@ export interface MatchResult {
   /** privacy-preserving jittered coordinates for the map view, if this candidate shares a location, else null */
   approxLat: number | null;
   approxLng: number | null;
+  locationSource: MatchLocationSource;
 }
 
 /**
@@ -83,6 +95,7 @@ export function computeMatches(
       distanceKm: candidate.distanceKm,
       approxLat: candidate.approxLat,
       approxLng: candidate.approxLng,
+      locationSource: candidate.locationSource,
     });
   }
 

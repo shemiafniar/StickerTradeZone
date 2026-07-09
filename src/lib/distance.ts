@@ -17,3 +17,26 @@ export function formatDistanceHebrew(km: number): string {
 export function roundCoordinate(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
+
+/**
+ * Small deterministic offset (up to ~2km) derived from a stable string
+ * (e.g. a user id) - used to keep city-center-derived map markers from
+ * stacking exactly on top of each other when several users share a city,
+ * without needing any real per-user location data (city/neighborhood are
+ * already public profile fields, so this isn't a new privacy boundary -
+ * it's purely a visual "don't overlap" nicety, same order of magnitude as
+ * the server-side GPS jitter in nearby_locations()).
+ */
+export function deterministicJitter(seed: string): { dLat: number; dLng: number } {
+  let hashLat = 0;
+  let hashLng = 0;
+  for (let i = 0; i < seed.length; i++) {
+    const code = seed.charCodeAt(i);
+    hashLat = (hashLat * 31 + code) | 0;
+    hashLng = (hashLng * 37 + code + 7) | 0;
+  }
+  return {
+    dLat: (hashLat % 2000) / 100000,
+    dLng: (hashLng % 2000) / 100000,
+  };
+}

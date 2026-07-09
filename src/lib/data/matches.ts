@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { getStickerIdToCodeMap } from "@/lib/data/stickers";
-import { computeMatches, type MatchCandidateInput, type MatchResult } from "@/lib/matching";
+import { getCityCoordinates } from "@/lib/cities";
+import { deterministicJitter } from "@/lib/distance";
+import { computeMatches, type MatchCandidateInput, type MatchLocationSource, type MatchResult } from "@/lib/matching";
 import type { Profile, UserSticker } from "@/types/database";
 
 export async function getMatchesForCurrentUser(): Promise<{
@@ -55,6 +57,39 @@ export async function getMatchesForCurrentUser(): Promise<{
     byUser.get(row.user_id)!.push(row);
   }
 
+  /**
+   * Resolves the best available approximate map location for a candidate:
+   * 1. GPS (nearby_locations(), already server-side jittered) if they
+   *    opted into precise location - the accurate distance too.
+   * 2. Otherwise, their profile's city center (public data already -
+   *    city/neighborhood are visible to everyone, so this isn't a new
+   *    privacy boundary), with a small deterministic per-user jitter so
+   *    several collectors in the same city don't stack on one point.
+   * 3. Otherwise, no location at all - kept in the list, never plotted.
+   */
+  function resolveApproxLocation(profile: Profile): {
+    approxLat: number | null;
+    approxLng: number | null;
+    locationSource: MatchLocationSource;
+  } {
+    const gps = locationByUserId.get(profile.id);
+    if (gps) {
+      return { approxLat: gps.approxLat, approxLng: gps.approxLng, locationSource: "gps" };
+    }
+
+    const cityCoords = getCityCoordinates(profile.city);
+    if (cityCoords) {
+      const jitter = deterministicJitter(profile.id);
+      return {
+        approxLat: cityCoords.lat + jitter.dLat,
+        approxLng: cityCoords.lng + jitter.dLng,
+        locationSource: "city",
+      };
+    }
+
+    return { approxLat: null, approxLng: null, locationSource: null };
+  }
+
   const candidates: MatchCandidateInput[] = profiles.map((p) => {
     const theirs = byUser.get(p.id) ?? [];
     const theirDups = theirs.filter((d) => d.status === "duplicate");
@@ -80,8 +115,7 @@ export async function getMatchesForCurrentUser(): Promise<{
       priceByCode,
       missingCodes: theirMissing.map((m) => idToCode.get(m.sticker_id) ?? "").filter(Boolean),
       distanceKm: locationByUserId.get(p.id)?.distanceKm ?? null,
-      approxLat: locationByUserId.get(p.id)?.approxLat ?? null,
-      approxLng: locationByUserId.get(p.id)?.approxLng ?? null,
+      ...resolveApproxLocation(p),
     };
   });
 
