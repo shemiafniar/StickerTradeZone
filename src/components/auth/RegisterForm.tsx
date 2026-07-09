@@ -3,12 +3,12 @@
 import { useActionState } from "react";
 import Link from "next/link";
 import { signUpAction, type AuthActionState } from "@/lib/actions/auth";
-import { FieldGroup, Input, Label, Select } from "@/components/ui/Field";
+import { FieldGroup, Input, Label } from "@/components/ui/Field";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { ErrorMessage, SuccessMessage } from "@/components/ui/FormMessage";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { OrDivider } from "@/components/auth/OrDivider";
-import { ISRAEL_CITIES } from "@/lib/cities";
+import { CityAutocomplete } from "@/components/ui/CityAutocomplete";
 
 const initialState: AuthActionState = {};
 
@@ -57,16 +57,7 @@ export function RegisterForm() {
 
         <FieldGroup>
           <Label htmlFor="city">עיר</Label>
-          <Select id="city" name="city" required defaultValue="">
-            <option value="" disabled>
-              בחרו עיר
-            </option>
-            {ISRAEL_CITIES.map((city) => (
-              <option key={city} value={city}>
-                {city}
-              </option>
-            ))}
-          </Select>
+          <CityAutocomplete id="city" name="city" required />
         </FieldGroup>
 
         <FieldGroup>
