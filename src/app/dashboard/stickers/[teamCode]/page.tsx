@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getCurrentProfile } from "@/lib/data/profile";
 import { getTeamGrid } from "@/lib/data/collection";
 import { StickerGrid } from "@/components/collection/StickerGrid";
+import { TeamFlag } from "@/components/collection/TeamFlag";
 
 export async function generateMetadata({ params }: { params: Promise<{ teamCode: string }> }) {
   const { teamCode } = await params;
@@ -27,7 +28,7 @@ export default async function TeamStickersPage({ params }: { params: Promise<{ t
       </Link>
 
       <div className="mb-5 flex items-center gap-3">
-        <span className="text-4xl leading-none">{grid.team.flag_emoji}</span>
+        <TeamFlag flagIcon={grid.team.flag_icon} flagEmoji={grid.team.flag_emoji} size="lg" />
         <div>
           <h1 className="text-2xl font-extrabold">{grid.team.name_he}</h1>
           <p className="text-sm font-bold tracking-wide text-foreground/40">{grid.team.code}</p>
