@@ -1,7 +1,7 @@
 import { AuthShell } from "@/components/auth/AuthShell";
 import { RegisterForm } from "@/components/auth/RegisterForm";
 
-export const metadata = { title: "הרשמה | Shashot" };
+export const metadata = { title: "הרשמה" };
 
 export default function RegisterPage() {
   return (

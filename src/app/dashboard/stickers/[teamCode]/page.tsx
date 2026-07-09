@@ -7,7 +7,7 @@ import { TeamFlag } from "@/components/collection/TeamFlag";
 
 export async function generateMetadata({ params }: { params: Promise<{ teamCode: string }> }) {
   const { teamCode } = await params;
-  return { title: `${teamCode.toUpperCase()} | Shashot` };
+  return { title: teamCode.toUpperCase() };
 }
 
 export default async function TeamStickersPage({ params }: { params: Promise<{ teamCode: string }> }) {

@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/Card";
 import { AddTeamForm } from "@/components/admin/StickerCatalogForms";
 import { TeamFlag } from "@/components/collection/TeamFlag";
 
-export const metadata = { title: "קטלוג מדבקות | Shashot" };
+export const metadata = { title: "קטלוג מדבקות" };
 
 export default async function AdminStickersPage() {
   const [settings, teams] = await Promise.all([getAppSettings(), getTeams()]);

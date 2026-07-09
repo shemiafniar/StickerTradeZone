@@ -13,7 +13,7 @@ import {
   declineTradeAction,
 } from "@/lib/actions/trades";
 
-export const metadata = { title: "פרטי טרייד | Shashot" };
+export const metadata = { title: "פרטי טרייד" };
 
 export default async function TradeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

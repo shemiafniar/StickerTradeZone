@@ -5,8 +5,17 @@
 :root {
   --background: #f7f8fb;
   --foreground: #14213d;
-  --brand: #0ea56d;
-  --brand-dark: #0a7d52;
+  /* Shashot brand palette (see public/branding/ and README's "Brand assets"
+     section) - Primary Green + Primary Blue + Dark Navy, matched to the
+     official logo. --brand/--brand-dark keep their original names (used in
+     dozens of existing components) but are tuned to the logo's green;
+     --brand-blue/--brand-navy are new, used for secondary buttons, active
+     nav, and badges/icons that want the blue or navy side of the palette. */
+  --brand: #10b872;
+  --brand-dark: #0a8f5a;
+  --brand-blue: #0d84f2;
+  --brand-blue-dark: #0a66c2;
+  --brand-navy: #101c34;
   --accent: #ffb703;
 }
 
@@ -15,6 +24,9 @@
   --color-foreground: var(--foreground);
   --color-brand: var(--brand);
   --color-brand-dark: var(--brand-dark);
+  --color-brand-blue: var(--brand-blue);
+  --color-brand-blue-dark: var(--brand-blue-dark);
+  --color-brand-navy: var(--brand-navy);
   --color-accent: var(--accent);
   --font-sans: var(--font-heebo);
 }
@@ -76,6 +88,11 @@ body {
   border: 2px solid white;
   box-shadow: 0 2px 6px rgba(20, 33, 61, 0.35);
   font-size: 16px;
+}
+
+.matches-map-marker--approx {
+  background: #d97706;
+  border-style: dashed;
 }
 
 .matches-map-marker__badge {

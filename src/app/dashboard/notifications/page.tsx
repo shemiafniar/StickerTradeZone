@@ -3,7 +3,7 @@ import { getNotifications } from "@/lib/data/notifications";
 import { Card } from "@/components/ui/Card";
 import { NotificationHistoryList } from "@/components/notifications/NotificationHistoryList";
 
-export const metadata = { title: "התראות | Shashot" };
+export const metadata = { title: "התראות" };
 
 const notificationIcons: Record<string, string> = {
   trade_request_received: "🤝",

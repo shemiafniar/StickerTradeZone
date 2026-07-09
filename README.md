@@ -46,7 +46,9 @@ bootstrap passes.
   team code + number in a corner, e.g. "GER 2") and the scanner detects and marks them all as owned
   after a quick review/confirmation screen. Ships with a fully working mock provider (no external
   dependency) and an optional OpenAI Vision provider you can enable with one env var. The scanner is
-  always an optional shortcut - the grid is the primary workflow.
+  always an optional shortcut, reached from "My Collection" and the dashboard (not its own top-level
+  nav item, to keep the primary nav focused on the grid as the main workflow) - the page/route/
+  component are all still fully intact, only the redundant nav link was removed.
 - A separate "הכפולים שלי" (my duplicates) page lets you set marketplace details (trade/sale/both,
   price, note) for any sticker marked blue, without interrupting the tap-to-mark grid flow.
 
@@ -57,8 +59,12 @@ bootstrap passes.
   accepted - enforced at the database level via RLS, not just in the UI)
 - Trade requests: pending → accepted/declined → completed/cancelled; contact details (incl. a
   WhatsApp deep link) are revealed only once a trade is accepted
-- Admin dashboard: platform stats, searchable/filterable user table with suspend/reactivate, a form
-  to add new participating teams (auto-generating their 20 stickers), and an `admin_logs` audit trail
+- **Admin dashboard** (`/admin`, admin-only, protected server-side - not just hidden from the nav) -
+  platform stats (users, trades, matches, location adoption), a searchable users table with a full
+  profile/edit/suspend/delete view per user, a trades table with cancel/force-complete/delete
+  actions, live-computed statistics (most wanted/common stickers, most active traders, trades-per-day
+  and user-growth charts), a form to add new participating teams, and an `admin_logs` audit trail -
+  see [Admin dashboard](#admin-dashboard) below for the full breakdown.
 
 ### Location, chat, notifications, marketplace, sharing
 
@@ -66,13 +72,21 @@ bootstrap passes.
   ~100m before it ever leaves the device) powers real distance sorting ("500 מ׳" / "2.3 ק״מ"),
   with city/region matching kept as an automatic fallback for anyone who hasn't enabled it. Exact
   coordinates are never exposed to other users - see [Location privacy](#location-privacy) below.
+- **~1,180 Israeli localities**, searchable by typing (not a giant `<select>`) - see
+  [Israeli localities dataset](#israeli-localities-dataset) below for where this comes from and how
+  it stays compatible with cities already stored on existing profiles.
 - **Interactive matches map** - `/dashboard/matches` has a "מפה"/"רשימה" toggle; the map (Leaflet +
-  OpenStreetMap, centered on Israel) plots a marker per nearby matching collector who's opted into
-  location, using the same further-jittered approximate coordinates described in
-  [Location privacy](#location-privacy) - clicking a marker shows a popup with the same information
-  as a match card (name, city, distance, give/receive counts, top sticker codes, and a "שלח בקשת
-  טרייד" button). The list view is never removed - it's one tab away, and is what's shown by default
-  for anyone without location enabled.
+  OpenStreetMap, centered on Israel) plots a marker for every nearby matching collector who has
+  *any* usable location info, not just precise GPS: collectors who opted into location get a marker
+  at their (further-jittered) GPS position; collectors who only filled in city/neighborhood get a
+  marker approximated to their city's center (also jittered, so several collectors in one city don't
+  stack exactly on top of each other); collectors with neither are simply kept in the list, never
+  plotted. The popup always says which kind of location it is (see
+  [Location privacy](#location-privacy) below for the exact wording) - never pretending a
+  city-derived estimate is precise. Clicking a marker shows the same information as a match card
+  (name, city, distance when known, give/receive counts, top sticker codes, and a "שלח בקשת טרייד"
+  button). The list view is never removed - it's one tab away, and is what's shown by default for
+  anyone without location enabled.
 - **Trade chat** - each trade request has a private, realtime 1:1 conversation (`trade_messages`),
   visible only to its two participants, with unread badges and auto-scroll.
 - **Notifications** - a bell with a live unread badge, dropdown, and full history page. Notifications
@@ -82,6 +96,66 @@ bootstrap passes.
   connects collectors.
 - **Viral sharing** - native share sheet (where supported), a WhatsApp share link, and a "copy
   link" button, using the product's suggested Hebrew invite text.
+
+## Brand assets
+
+The finalized Shashot identity (a stylized "5"/card/soccer-ball mark in Primary Green + Primary
+Blue, paired with a "SHASHOT" wordmark in Dark Navy) lives in `public/branding/`:
+
+```
+public/branding/
+  logo-icon.png           Icon-only mark, transparent - used above the landing page's headline,
+                             and as the source for the footer's small icon
+  logo-horizontal.png      Icon + wordmark (no tagline), transparent - the header logo, sized to
+                             ~44px tall so it fits the existing navbar height unchanged
+  logo-horizontal-full.png  Icon + wordmark + "TRADE · CONNECT · COLLECT" tagline, transparent -
+                             for larger contexts than the header allows (currently unused, kept for
+                             future marketing pages/docs)
+  app-icon-512.png         Icon mark on a rounded Dark Navy square, 512x512 - the source used to
+                             build favicon.ico and apple-touch-icon.png
+  apple-touch-icon.png     180x180, opaque (per Apple's guidance - no transparency), copied to
+                             src/app/apple-icon.png for Next.js's file-based icon convention
+  favicon.ico              16/32/48px multi-resolution, copied to src/app/favicon.ico for the same
+                             file-based convention (see below)
+```
+
+**Why two copies of the favicon/apple icon?** Next.js's App Router auto-detects and serves
+`src/app/favicon.ico` and `src/app/apple-icon.png` with zero configuration - no `metadata.icons`
+needed, and critically, no risk of emitting a second, conflicting `<link rel="icon">` tag (which is
+exactly what happened when this repo's original placeholder `src/app/favicon.ico` and a manually-set
+`metadata.icons` entry were both present at once during this change - fixed by making
+`public/branding/` the canonical source and copying from it into the two `src/app/` convention
+files, so there's exactly one favicon and one apple-touch-icon link in the rendered `<head>`).
+
+**Color palette** (`src/app/globals.css`):
+
+| Variable | Hex | Tailwind utilities | Used for |
+| --- | --- | --- | --- |
+| `--brand` (Primary Green) | `#10b872` | `bg-brand`, `text-brand`, `border-brand` | Primary buttons, active nav, primary badges/links, progress bars |
+| `--brand-dark` | `#0a8f5a` | `bg-brand-dark`, `text-brand-dark` | Hover/active state for the above, and most link text |
+| `--brand-blue` (Primary Blue) | `#0d84f2` | `bg-brand-blue`, `text-brand-blue` | Secondary buttons, secondary badges/stat tiles, icons |
+| `--brand-blue-dark` | `#0a66c2` | `bg-brand-blue-dark` | Hover/active state for secondary buttons |
+| `--brand-navy` (Dark Navy) | `#101c34` | `bg-brand-navy`, `text-brand-navy` | The app-icon background, the admin "role" badge, decorative dark accents |
+| `--foreground` | `#14213d` | `text-foreground`, `bg-foreground` | Body text (already a dark navy tone - kept separate from `--brand-navy` so a future brand-navy tweak can't accidentally shift every line of body copy on the site) |
+
+These are additive to the existing palette (`--accent` for marketplace "sale" indicators and
+`--background` are unchanged) - see the inline comment in `globals.css` for the full rationale.
+`sticker` status colors (gray/green/blue/red in the collection grid - see
+[Visual collection model](#visual-collection-model-teams--sticker-codes)) are a **separate,
+functional** color-coding system and were deliberately left untouched by this pass; only the
+*decorative*/branding use of blue (secondary buttons, stat tiles, admin badges) was aligned to the
+new `--brand-blue`.
+
+**Where the logo appears**: the header (`SiteHeader.tsx`, `logo-horizontal.png` at a fixed 44px
+height - the navbar itself is still `h-16` (64px), unchanged), the landing page hero
+(`src/app/page.tsx`, `logo-icon.png` above the headline with a soft decorative blurred glow behind
+it), and the footer (`SiteFooter.tsx`, a small `logo-icon.png`).
+
+**If real vector (SVG) exports become available later**: drop `logo-icon.svg` and
+`logo-horizontal.svg` into `public/branding/`, then update the three `<Image src="/branding/...">`
+references above (in `SiteHeader.tsx`, `page.tsx`, and `SiteFooter.tsx`) to point at the `.svg`
+files instead of `.png` - everything else (sizing, layout, the favicon/apple-icon pipeline) stays
+the same.
 
 ## Project structure
 
@@ -93,10 +167,14 @@ src/
     dashboard/stickers/page.tsx             Team cards list ("My Collection")
     dashboard/stickers/[teamCode]/page.tsx  20-sticker tap-to-mark grid for one team
     dashboard/stickers/marketplace/page.tsx Marketplace details editor for duplicate (blue) stickers
+    admin/users/[id]/page.tsx               Per-user view/edit/suspend/delete
+    admin/trades/page.tsx                   All trades in the system + cancel/force-complete/delete
+    admin/statistics/page.tsx               Live-computed platform statistics
   components/
-    ui/                    Shared primitives (Button, Card, Field, Skeleton, ...)
+    ui/                    Shared primitives (Button, Card, Field, Skeleton, CityAutocomplete, ...)
     collection/            TeamCard, StickerGrid (tap-to-cycle grid), ColorLegend, DuplicateListingChip
-    auth/ trades/ admin/ profile/  Feature UI
+    auth/ trades/ profile/  Feature UI
+    admin/                  AdminTabs, EditUserForm, DeleteUserButton, AdminTradeActions, StatCharts
     matches/                MatchCard, MatchesView (map/list toggle), MatchesMap (Leaflet, client-only)
     location/              Location opt-in/opt-out toggle
     notifications/         Notification bell + history list
@@ -106,12 +184,15 @@ src/
     actions/               Server Actions (auth, profile, stickers, trades, chat,
                             notifications, location, scanner, admin)
     data/                  Server-side data fetchers (Supabase queries) - teams.ts, collection.ts
-                            (team progress + grid + marketplace listings), matches.ts, stickers.ts
-    supabase/              Supabase client/server/proxy (session) helpers
+                            (team progress + grid + marketplace listings), matches.ts, stickers.ts,
+                            admin.ts (users/trades/stats, all admin-only pages)
+    supabase/              Supabase client/server/proxy (session) helpers, serviceRole.ts
+                            (Auth Admin API client, only for admin user-deletion)
     vision/                Vision/OCR provider abstraction (mock + OpenAI) for the AI Scanner
     matching.ts            Pure, side-effect-free match-ranking algorithm (operates on sticker codes)
-    cities.ts              Israeli city → region map (fallback for location-less users)
-    distance.ts            Haversine display formatting + coordinate rounding
+    cities.ts              Public API over israelLocalities.ts - city list, region/coordinate lookup
+    data/israelLocalities.ts  ~1,180 Israeli localities (name + lat/lng) - see README section below
+    distance.ts            Haversine display formatting, coordinate rounding, deterministic jitter
     stickerCodes.ts        Sticker code parsing/formatting/validation ("GER-2", "GER 1-3 · FRA 17")
   types/database.ts        Hand-written Supabase Database types
   proxy.ts                 Next.js 16 "proxy" (formerly middleware) - session refresh + route guards
@@ -137,6 +218,8 @@ supabase/
                                         flag_icon column, replacing 0011's placeholder 32-team list
   migrations/0013_matches_map.sql    nearby_locations() RPC - jittered approximate coordinates
                                         for the matches map, alongside the same real distance
+  migrations/0014_admin_dashboard.sql  Admin-only trade_requests DELETE policy (previously missing
+                                        entirely) + admin_get_user_emails() RPC for the users table
   diagnostics/check_auth_trigger.sql Read-only script to debug "Database error saving new user"
   seed.sql                           Local-dev-only seed data (demo users + collections + trades + chat)
 ```
@@ -453,6 +536,23 @@ returns raw coordinates:
   a location on a visual map the way an unjittered marker would. The true, unjittered distance is
   still what's shown as text and used for sorting - only the *marker position* is approximate.
 
+**Map markers for collectors without GPS location** (`src/lib/data/matches.ts`): city and
+neighborhood are already public `profiles` fields, visible to every signed-in collector for
+matching/marketplace purposes - so deriving an approximate map position from a collector's *city*
+isn't a new privacy boundary the way GPS coordinates would be. A collector who hasn't opted into
+precise location, but has filled in a city, still gets a marker - placed at that city's center
+(`getCityCoordinates()` in `cities.ts`) with the same kind of small deterministic per-user jitter as
+above (`deterministicJitter()` in `distance.ts`, computed entirely client/server-side in TypeScript -
+no extra database round-trip, since it's not derived from any sensitive stored coordinate). The
+popup always says exactly which kind of estimate it's showing, so a city-derived pin is never
+mistaken for a real GPS fix:
+
+- GPS-based marker: `📍 מיקום מבוסס GPS (מוצג בקירוב מטעמי פרטיות)`
+- City-based marker: `📍 מיקום משוער לפי הפרופיל`
+
+A collector with neither a GPS location nor a city stays in the list view and is simply never
+plotted on the map.
+
 On top of that:
 
 - The browser rounds coordinates to 3 decimal places (~100m) *before* sending them to the server
@@ -463,6 +563,46 @@ On top of that:
 - Users without a stored location automatically fall back to city/region-based ranking - nothing
   breaks or requires location to be useful. On the matches map specifically, a collector without a
   location is kept in the list view but simply never gets a marker.
+
+### Israeli localities dataset
+
+`src/lib/data/israelLocalities.ts` holds ~1,180 Israeli cities, local councils, and towns (Hebrew
+name + approximate lat/lng), replacing an original hand-picked ~50-city list. `src/lib/cities.ts` is
+the actual public API built on top of it (`ISRAEL_CITIES`, `getCityCoordinates()`,
+`getRegionForCity()`, `getLocationRank()`) - always import from `cities.ts`, not the data file
+directly, so the underlying dataset can be refreshed later without touching every call site.
+
+**Provenance and data-quality fixes**: sourced from the MIT-licensed
+[`israel-geolocation`](https://github.com/akivaschiff/israel-geolocation) npm package (1,264
+locations built from Israeli government open data + OpenStreetMap + Google Maps geocoding), merged
+with this app's original city list and vendored as a plain static file rather than a runtime
+dependency (a few hundred KB of coordinates that never change at runtime don't need to be
+re-resolved on every request). Two things were fixed during that merge, not just copied as-is:
+
+1. **A real data-quality bug in the source dataset**: 85 different localities (including two this
+   app actually uses, מעלה אדומים and טירה) all shared the exact same placeholder coordinate
+   (a failed-geocoding fallback in the upstream data). Those 85 were dropped; מעלה אדומים and טירה
+   were re-added with correct, manually-verified coordinates so nothing this app already relies on
+   regressed.
+2. **Backward compatibility with existing stored data**: the source dataset spells some names
+   differently from this app's original list (e.g. `תל אביב - יפו` with hyphens/spaces vs. this
+   app's `תל אביב יפו`). Every one of the original ~50 city strings is preserved
+   *character-for-character* in the final dataset (verified by a normalized-name matching pass, then
+   a unit test asserting every original name is still present) - so `profiles.city` values already
+   stored in any database from before this change remain valid and selectable, exactly per the "do
+   not remove or rename values already stored in the database" requirement this was built against.
+
+**Region fallback**: `CITY_REGIONS` (a curated grouping for a few dozen well-known cities) is kept
+exactly as before for backward compatibility with `getRegionForCity()`'s existing contract and
+tests - maintaining a hand-picked region for **all** ~1,180 localities would be impractical and
+wouldn't scale. Instead, `getLocationRank()` now falls back to real coordinate-based proximity
+(≤15km counts as "nearby") for any pair of localities outside that curated set, which is what makes
+the full dataset actually useful for ranking without requiring it to be hand-categorized.
+
+**UI**: since ~1,180 options is far too many for a usable `<select>`, the city field on
+registration/profile/admin-edit forms was replaced with `CityAutocomplete.tsx` - a reusable
+Hebrew-searchable combobox (type to filter, arrow keys + Enter to pick) that still submits a plain
+`city` form field, so no Server Action needed to change.
 
 ### Suspended users are blocked at the database level
 
@@ -536,6 +676,70 @@ change to how distance is computed (e.g. a fancier geo index) only touches `near
   location enabled, `"list"` otherwise (per the product requirement) - this is a one-time default,
   not re-evaluated on every render, so switching tabs manually always sticks for the rest of the visit.
 
+### Admin dashboard
+
+`/admin` (and everything under it) is gated **server-side**, not just hidden from the nav:
+`src/app/admin/layout.tsx` is a Server Component that redirects to `/login` (no session) or
+`/dashboard` (signed in but `role !== 'admin'`) *before* rendering or fetching anything - this is
+the same guard the original admin pages already used, now covering every new page underneath it too
+since they all nest inside this one layout. Every admin Server Action independently re-checks
+`role === 'admin'` via `requireAdmin()` in `src/lib/actions/admin.ts` (so calling an action directly,
+bypassing the UI entirely, is equally blocked), and the two most sensitive underlying operations have
+their own database-level admin check as a third layer: the `admin_get_user_emails()` RPC
+(`0014_admin_dashboard.sql`) raises an exception for a non-admin caller regardless of who calls it,
+and deleting a trade request is only possible at all under RLS for an admin (see below).
+
+**Dashboard** (`/admin`) - registered/active/suspended users, users with location enabled, trade
+counts by status, and total active matches (computed by running the same set-intersection rule as
+`computeMatches()` over every pair of active users - see `getMatchCountsByUser()` in
+`src/lib/data/admin.ts` - fine at beta scale; would move to a scheduled/cached computation if the
+user base grew large enough for the O(n²) pass to matter).
+
+**Users management** (`/admin/users`, `/admin/users/[id]`) - a searchable table (name/email/city,
+matched client-side after one fetch - beta-scale) showing collection size, trade count, active
+match count, and location status per user, linking to a full per-user detail page with:
+
+- **View**: every stat above plus revealed contact info (phone) - already permitted for admins by
+  the existing `profile_contacts` RLS policy, this page just surfaces it.
+- **Edit** (`updateUserAction`): full name, city (via the same `CityAutocomplete`), neighborhood, and
+  role - promoting/demoting between `user`/`admin` is already allowed by the existing
+  `profiles_update_self_or_admin` RLS policy and the `prevent_role_status_escalation` trigger (which
+  only blocks *non-admin* self-escalation, not an admin editing someone else).
+- **Suspend/reactivate**: unchanged, reuses the existing `SuspendUserButton`/`setUserSuspendedAction`.
+- **Delete** (`deleteUserAction`): permanently removes the user via the **Auth Admin API**
+  (`supabase.auth.admin.deleteUser()`), not a plain `DELETE` on `profiles`. Deleting only the
+  `profiles` row would leave an orphaned, still-loginable `auth.users` entry that would simply get a
+  fresh profile re-created by the existing self-heal path (`ensureProfileExists()` in
+  `data/profile.ts`) on next login - not a real deletion. The Admin API call cascades through
+  `profiles` and every table referencing it (contacts, collection, trades, chat, notifications,
+  locations) via their existing `ON DELETE CASCADE` foreign keys. This requires a **service-role**
+  Supabase client (`src/lib/supabase/serviceRole.ts`, gated behind `SUPABASE_SERVICE_ROLE_KEY` - see
+  [Configure environment variables](#6-configure-environment-variables) below) - the only place in
+  this codebase that uses the service role, and only ever reached after `requireAdmin()` has already
+  verified the caller. An admin cannot delete their own account, and cannot delete another admin
+  account without demoting them first (both are explicit checks in the action, independent of RLS).
+- Impersonation ("login as user") isn't implemented, but the architecture doesn't preclude it: it
+  would be one more action in the same file, behind the same `requireAdmin()` guard.
+
+**Trades management** (`/admin/trades`) - every trade request in the system (participants, status,
+creation date, sticker codes offered/requested), with cancel / force-complete / delete actions.
+Cancel and force-complete are just a normal status `UPDATE` - already unconditionally allowed for an
+admin caller by the existing `validate_trade_status_transition()` trigger (see
+`0001_schema.sql`/`0007_hardening.sql`), no new logic needed. **Delete did need new SQL**:
+`trade_requests` never had a `DELETE` RLS policy at all (only select/insert/update), so even an
+admin couldn't delete one before `0014_admin_dashboard.sql` added the missing admin-only policy.
+Deleting a trade cascades to its `trade_request_items` and `trade_messages` via their existing
+foreign keys - cascade deletes bypass RLS on the *cascaded-to* table, so no additional policy was
+needed there, only on `trade_requests` itself (verified locally: a non-admin's delete attempt
+affects 0 rows, an admin's cascades correctly to items and chat messages).
+
+**Statistics** (`/admin/statistics`) - most-wanted stickers (highest `missing` count), most-common
+stickers (highest `have`+`duplicate` count), most active traders, and 14-day trades-per-day /
+user-growth charts - all computed live from the database on every page load (`getAdminStatistics()`
+in `data/admin.ts`), nothing hardcoded. Rendered with plain CSS bars/columns
+(`src/components/admin/StatCharts.tsx`) rather than a charting library, to avoid an extra dependency
+for a handful of simple ranked lists and daily counts.
+
 ### Swapping the AI Scanner's Vision provider
 
 `src/lib/vision/types.ts` defines a single `VisionProvider` interface with one method,
@@ -599,12 +803,13 @@ npx supabase link --project-ref <your-project-ref>
 
 # 1. Get production's public schema in sync RIGHT NOW (unblocks the app immediately):
 #    copy the full contents of supabase/migrations/0011_shashot_teams.sql, then
-#    0012_worldcup2026_teams.sql, then 0013_matches_map.sql, into the Supabase
-#    Dashboard -> SQL Editor and run each, in that order, if you haven't already.
+#    0012_worldcup2026_teams.sql, then 0013_matches_map.sql, then
+#    0014_admin_dashboard.sql, into the Supabase Dashboard -> SQL Editor and run
+#    each, in that order, if you haven't already.
 
-# 2. Tell Supabase's tracking table that 0001-0013 are already applied, so future
+# 2. Tell Supabase's tracking table that 0001-0014 are already applied, so future
 #    `db push` runs only ever apply what's genuinely new from here on:
-npx supabase migration repair --status applied 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013
+npx supabase migration repair --status applied 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013 0014
 
 # 3. Confirm local and remote agree before trusting CI with it:
 npx supabase migration list
@@ -665,8 +870,9 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 11. `supabase/migrations/0011_shashot_teams.sql`
 12. `supabase/migrations/0012_worldcup2026_teams.sql`
 13. `supabase/migrations/0013_matches_map.sql`
+14. `supabase/migrations/0014_admin_dashboard.sql`
 
-All 13 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 14 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
 inserts/updates are required, including for your first admin account (see step 4) or the sticker
@@ -764,6 +970,12 @@ Optional:
 
 - `OPENAI_API_KEY` / `OPENAI_VISION_MODEL` - enables real AI detection in the Sticker Scanner. Leave
   unset to use the built-in mock provider (fully functional, no external calls).
+- `SUPABASE_SERVICE_ROLE_KEY` - only needed for one specific admin action, permanently deleting a
+  user (`/admin/users/[id]` → "מחיקת משתמש לצמיתות"), which needs the Auth Admin API to remove the
+  underlying `auth.users` row. Every other admin feature works without it. From your Supabase
+  project's **Settings → API → service_role key** (marked "secret"). **Never** expose this to the
+  client, prefix it with `NEXT_PUBLIC_`, or commit it - it bypasses Row Level Security entirely. See
+  [Admin dashboard](#admin-dashboard) above for exactly how/where it's used.
 
 ### 7. Install dependencies & run
 
@@ -784,7 +996,7 @@ system automatically generates that team's 20 stickers (`CODE-1` through `CODE-2
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 13 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 14 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`) to get the initial schema in place. Do **not** run `seed.sql`
    against it (it has a built-in guard that refuses to run if it detects any non-demo account already
    exists, but the safest rule is simply: don't run it against a hosted project at all).
@@ -805,6 +1017,8 @@ system automatically generates that team's 20 stickers (`CODE-1` through `CODE-2
    - `NEXT_PUBLIC_SITE_URL` set to your production URL (e.g. `https://your-app.vercel.app`) - not
      strictly required (see "Recommended" above) but avoids any ambiguity across preview deployments
    - `OPENAI_API_KEY` (optional, enables real AI Scanner detection)
+   - `SUPABASE_SERVICE_ROLE_KEY` (optional, only needed for the admin "delete user" action - see
+     [Configure environment variables](#6-configure-environment-variables) above)
 5. Deploy. No build-time secrets or server infra beyond Supabase + Vercel (+ GitHub Actions for step
    2) are required - there's no custom server, cron job, or queue in this Beta.
 6. Sign up through the live app. **You're automatically an admin** - nothing else to configure. The
@@ -817,7 +1031,7 @@ visits or manual profile/role edits, for this release or any future one.
 ### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 13 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+- ✅ All 14 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
   times, including a full clean-room run for this pass) with zero errors.
 - ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
   Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
@@ -855,7 +1069,7 @@ npm run dev     # start the dev server
 npm run build   # production build (also runs the TypeScript check)
 npm run start   # run the production build
 npm run lint    # ESLint
-npm test        # Vitest unit tests (matching, sticker code parsing, distance, vision provider)
+npm test        # Vitest unit tests (matching, sticker code parsing, distance, vision provider, cities)
 ```
 
 ## Security notes
@@ -879,8 +1093,21 @@ npm test        # Vitest unit tests (matching, sticker code parsing, distance, v
 - Suspended users are blocked at the RLS/trigger level from creating trade requests, responding to
   them, and sending chat messages - not just hidden from the UI. See "Suspended users are blocked at
   the database level" above.
-- Admin actions (suspend/reactivate users, catalog changes) are written to `admin_logs` for a basic
-  audit trail. An admin cannot suspend their own account (checked in the Server Action).
+- Admin actions (suspend/reactivate/edit/delete users, catalog changes, trade cancel/complete/delete)
+  are written to `admin_logs` for a basic audit trail. An admin cannot suspend, delete, or demote
+  their own account, and cannot delete another admin account without demoting them first (all
+  checked in the Server Action, not just RLS).
+- Every `/admin/*` page is gated by a **Server Component** layout that redirects before rendering or
+  fetching anything for a non-admin - not a client-side check that could be bypassed by disabling
+  JavaScript or hitting the URL directly. Every admin Server Action independently re-verifies
+  `role === 'admin'` too, so calling an action directly (bypassing the UI) is equally blocked. See
+  [Admin dashboard](#admin-dashboard) above.
+- Deleting a user goes through the Supabase **Auth Admin API** (service-role key), gated behind
+  `requireAdmin()` - the service-role client (`serviceRole.ts`) is never imported by client code and
+  is the only place in this codebase that bypasses RLS.
+- `trade_requests` previously had no `DELETE` RLS policy at all (an oversight, not a deliberate
+  restriction) - `0014_admin_dashboard.sql` adds an admin-only one; verified locally that a
+  non-admin's delete attempt still affects 0 rows.
 - Rate limiting on trade requests, chat messages, auth attempts, and AI Scanner uploads - see "Rate
   limiting & abuse prevention" above.
 - File uploads to the AI Scanner are validated (type allow-list + 8MB size cap) both client- and
@@ -903,7 +1130,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] On a brand new Supabase project (only the 13 migrations run, no seed, no manual SQL), register
+- [ ] On a brand new Supabase project (only the 14 migrations run, no seed, no manual SQL), register
       the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
@@ -944,6 +1171,11 @@ third-party share sheets) can't be fully exercised in CI:
 - [ ] With location disabled, confirm `/dashboard/matches` defaults to the "רשימה" tab, and that
       clicking "מפה" shows the "כדי לראות התאמות על המפה, הפעל מיקום בפרופיל" prompt instead of an
       empty/broken map
+- [ ] With location disabled but a city filled in on the profile, confirm you still get a marker on
+      the map (once you switch to the "מפה" tab) - approximated to that city, with the popup
+      showing "מיקום משוער לפי הפרופיל" (not the GPS wording, and no distance shown)
+- [ ] On the registration form and profile page, confirm the city field is a searchable text box
+      (not a giant dropdown) and that typing "עתל" finds עתלית
 - [ ] Find a match and send a trade request with suggested give/receive stickers
 - [ ] As the recipient, accept one trade request and decline another; confirm contact info appears
       only after acceptance
@@ -956,6 +1188,35 @@ third-party share sheets) can't be fully exercised in CI:
 - [ ] As an admin, suspend a test user, then (as that user) confirm you can no longer send a trade
       request or a chat message, but can still log in and see the suspension banner; reactivate and
       confirm actions work again
+- [ ] Confirm "סורק AI" is no longer in the main nav, but is still reachable from "האוסף שלי" and the
+      dashboard, and still fully works end-to-end (scan → review → save)
+- [ ] As an admin, open `/admin` and confirm the 8 dashboard stat cards and the 3 quick-link cards
+      all show real numbers (not placeholders); confirm none of `/admin/*` is reachable as a
+      non-admin (direct URL, not just the hidden nav link)
+- [ ] On `/admin/users`, search by a partial name, email, and city and confirm each narrows the
+      table; open a user's detail page and confirm the edit form saves changes (try changing their
+      city and, on a throwaway test account, promoting/demoting the role); confirm
+      suspend/reactivate still works from this page too
+- [ ] With `SUPABASE_SERVICE_ROLE_KEY` configured, delete a throwaway test user from their detail
+      page and confirm the confirmation dialog, then that they're gone from `/admin/users` and can
+      no longer log in (a fresh signup with the same email should work, proving the `auth.users` row
+      was actually removed, not just the profile)
+- [ ] On `/admin/trades`, confirm every trade in the system is listed (not just the admin's own);
+      cancel one, force-complete another, and delete a third - confirm each action's button set
+      updates correctly afterward and that a deleted trade's chat messages are gone too
+- [ ] On `/admin/statistics`, confirm the sticker/trader rankings and the two 14-day charts show
+      real numbers that change after you create new test data (not the same numbers every time)
+- [ ] Confirm the header logo renders at ~44px tall without changing the navbar's height, on both
+      desktop and mobile, and that the current page's nav link is visibly highlighted (desktop and
+      mobile menu both)
+- [ ] On the landing page, confirm the icon-only logo appears above the headline with its soft
+      background glow, and that the closing CTA section's green-to-blue gradient and white button
+      are both legible
+- [ ] Check the browser tab: confirm the favicon is the new branded icon (not a generic default),
+      and that the tab title matches the current page (e.g. "ניהול משתמשים | Shashot", not a
+      double `"... | Shashot | Shashot"` suffix)
+- [ ] On iOS Safari, "Add to Home Screen" and confirm the new dark-navy app icon is used (not a
+      screenshot thumbnail)
 
 **Security spot-checks** (safe to do with two browser profiles / incognito windows)
 
@@ -974,7 +1235,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 13 migrations in order, confirm no errors, do **not** run
+- [ ] Fresh Supabase project: run all 14 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
 - [ ] `select count(*) from public.teams;` returns exactly 48, and "האוסף שלי" shows 48 team cards,
@@ -1001,6 +1262,16 @@ third-party share sheets) can't be fully exercised in CI:
 
 ## Known limitations / TODOs for future releases
 
+- **The current `public/branding/` PNGs are a close recreation of the finalized logo, not an export
+  of the original source file.** The design tool available in this environment couldn't ingest the
+  brand assets provided as chat attachments directly (no way to save an inline chat image to disk
+  as a usable file); the icon mark and horizontal lockup were regenerated to match the provided
+  logo and style-guide mockup as closely as possible (same "5"/card/soccer-ball icon, same
+  green→blue gradient, same "SHASHOT" wordmark treatment), then background-removed and processed
+  into the final asset set. If pixel-perfect original files (ideally real `.svg` vectors) become
+  available, drop them into `public/branding/` under the same filenames (or `.svg` - see
+  [Brand assets](#brand-assets) above for exactly which files to replace) and re-derive
+  `favicon.ico`/`apple-icon.png`/the two `src/app/` convention copies from the new source.
 - **The matches map has no marker clustering yet.** At country-wide zoom, two collectors only a few
   km apart can render with visually overlapping markers. The implementation is deliberately modular
   for this (see [Matches map](#matches-map-leaflet--openstreetmap)) - adding
@@ -1008,6 +1279,20 @@ third-party share sheets) can't be fully exercised in CI:
 - **Map marker jitter is a fixed ~2km, not distance-adaptive.** This is a reasonable default for a
   country-scale view; a future refinement could scale the jitter radius with local marker density
   (more jitter in dense cities, less in sparse areas) for a better privacy/usefulness trade-off.
+- **Admin "total matches" and per-user match counts are computed with an O(n²) pass over every pair
+  of active users** (`getMatchCountsByUser()` in `data/admin.ts`) on every dashboard/users-page load.
+  Fine at beta scale (this is exactly the same complexity the map/list matching itself doesn't have,
+  since that's scoped to one user at a time) - if the user base grows large enough for this to matter,
+  cache it (e.g. a scheduled job writing to a small summary table) rather than computing on read.
+- **Admin statistics have no caching either** - same reasoning, same fix if it's ever needed.
+- **User impersonation ("login as user") isn't implemented**, per the brief - only the architecture
+  for it (a same-guarded action in `actions/admin.ts`) is in place.
+- **Region-based fallback ranking (`getLocationRank()`) still only has a hand-curated list for a few
+  dozen well-known cities** (`CITY_REGIONS` in `cities.ts`); everything else falls back to real
+  coordinate proximity (≤15km) instead, which is a reasonable default but not identical to genuine
+  administrative-region matching (e.g. two towns 14km apart but in different natural "regions" would
+  still count as rank 1). Not a regression - this fallback only matters for the small minority of
+  matches without a real GPS-based distance at all.
 - **`.github/workflows/database.yml` requires a one-time manual setup** (3 GitHub Actions secrets +
   one `supabase migration repair` command - see
   [Automated database migrations](#automated-database-migrations-cicd)) before it can deploy anything.

@@ -5,7 +5,7 @@ import { getAppSettings } from "@/lib/data/stickers";
 import { TeamCard } from "@/components/collection/TeamCard";
 import { Card } from "@/components/ui/Card";
 
-export const metadata = { title: "האוסף שלי | Shashot" };
+export const metadata = { title: "האוסף שלי" };
 
 export default async function StickersPage() {
   const profile = await getCurrentProfile();

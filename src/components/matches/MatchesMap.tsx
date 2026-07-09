@@ -6,7 +6,7 @@ import L from "leaflet";
 import Link from "next/link";
 import { formatDistanceHebrew } from "@/lib/distance";
 import { formatStickerCodesByTeam, serializeStickerCodes } from "@/lib/stickerCodes";
-import type { MatchResult } from "@/lib/matching";
+import type { MatchLocationSource, MatchResult } from "@/lib/matching";
 
 // Centered on Israel, zoomed to show the whole country by default.
 const ISRAEL_CENTER: [number, number] = [31.4, 34.9];
@@ -16,19 +16,30 @@ const DEFAULT_ZOOM = 7;
 // also the seam for adding marker clustering later (react-leaflet-cluster
 // or leaflet.markercluster both just wrap <Marker> children like these in
 // a cluster group component, no change needed here).
-function createMarkerIcon(score: number) {
+//
+// City-derived markers (locationSource "city") get a visibly different
+// (amber, dashed ring) style, reinforcing that they're a rougher estimate
+// than a GPS-based marker - the popup text is the authoritative
+// explanation, this is just a quick visual cue.
+function createMarkerIcon(score: number, locationSource: MatchLocationSource) {
   return L.divIcon({
     className: "", // avoid Leaflet's default marker class fighting our styles
-    html: `<div class="matches-map-marker">⚽<span class="matches-map-marker__badge">${score}</span></div>`,
+    html: `<div class="matches-map-marker${locationSource === "city" ? " matches-map-marker--approx" : ""}">⚽<span class="matches-map-marker__badge">${score}</span></div>`,
     iconSize: [34, 34],
     iconAnchor: [17, 17],
     popupAnchor: [0, -20],
   });
 }
 
+const LOCATION_SOURCE_LABEL: Record<"gps" | "city", string> = {
+  gps: "📍 מיקום מבוסס GPS (מוצג בקירוב מטעמי פרטיות)",
+  city: "📍 מיקום משוער לפי הפרופיל",
+};
+
 export interface MapMatch extends MatchResult {
   approxLat: number;
   approxLng: number;
+  locationSource: "gps" | "city";
 }
 
 export function MatchesMap({ matches }: { matches: MapMatch[] }) {
@@ -38,7 +49,7 @@ export function MatchesMap({ matches }: { matches: MapMatch[] }) {
     () =>
       matches.map((match) => ({
         match,
-        icon: createMarkerIcon(match.score),
+        icon: createMarkerIcon(match.score, match.locationSource),
       })),
     [matches]
   );
@@ -80,6 +91,7 @@ function MatchPopupContent({ match }: { match: MapMatch }) {
       {match.distanceKm !== null && (
         <p className="mt-1 text-xs font-bold text-brand-dark">📍 {formatDistanceHebrew(match.distanceKm)}</p>
       )}
+      <p className="mt-1 text-[11px] text-foreground/50">{LOCATION_SOURCE_LABEL[match.locationSource]}</p>
 
       <div className="mt-2 grid grid-cols-2 gap-2 text-center">
         <div className="rounded-lg bg-green-50 px-2 py-1.5">

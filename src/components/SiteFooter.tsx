@@ -1,7 +1,16 @@
+import Image from "next/image";
+
 export function SiteFooter() {
   return (
     <footer className="mt-auto border-t border-black/5 bg-white">
-      <div className="mx-auto max-w-5xl px-4 py-6 text-center text-sm text-foreground/60 space-y-2">
+      <div className="mx-auto max-w-5xl px-4 py-8 text-center text-sm text-foreground/60 space-y-3">
+        <Image
+          src="/branding/logo-icon.png"
+          alt="Shashot"
+          width={28}
+          height={28}
+          className="mx-auto h-7 w-7 opacity-80"
+        />
         <p className="font-medium text-foreground/70">
           זהו פלטפורמת קהילה עצמאית ואינה קשורה ל-Panini, FIFA, או כל מותג מדבקות רשמי אחר.
         </p>

@@ -4,7 +4,7 @@ import { getUnreadMessageCounts } from "@/lib/data/chat";
 import { Card } from "@/components/ui/Card";
 import { TradeStatusBadge } from "@/components/ui/Badge";
 
-export const metadata = { title: "טריידים | Shashot" };
+export const metadata = { title: "טריידים" };
 
 export default async function TradesPage() {
   const [trades, unreadCounts] = await Promise.all([
@@ -31,7 +31,7 @@ export default async function TradesPage() {
         <div className="flex flex-col gap-3">
           {trades.map((trade) => (
             <Link key={trade.id} href={`/dashboard/trades/${trade.id}`}>
-              <Card className="transition hover:-translate-y-0.5 hover:shadow-md">
+              <Card interactive>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-extrabold">{trade.otherUser?.full_name ?? "אספן"}</p>

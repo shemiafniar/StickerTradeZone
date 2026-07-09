@@ -2,7 +2,7 @@ import { AuthShell } from "@/components/auth/AuthShell";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { ErrorMessage } from "@/components/ui/FormMessage";
 
-export const metadata = { title: "התחברות | Shashot" };
+export const metadata = { title: "התחברות" };
 
 const errorMessages: Record<string, string> = {
   confirmation_failed:

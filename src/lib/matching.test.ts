@@ -14,6 +14,7 @@ function candidate(overrides: Partial<MatchCandidateInput>): MatchCandidateInput
     distanceKm: null,
     approxLat: null,
     approxLng: null,
+    locationSource: null,
     ...overrides,
   };
 }

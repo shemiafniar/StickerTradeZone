@@ -2,10 +2,10 @@
 
 import { useActionState } from "react";
 import { updateProfileAction, type ProfileActionState } from "@/lib/actions/profile";
-import { FieldGroup, Input, Label, Select } from "@/components/ui/Field";
+import { FieldGroup, Input, Label } from "@/components/ui/Field";
+import { CityAutocomplete } from "@/components/ui/CityAutocomplete";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { ErrorMessage, SuccessMessage } from "@/components/ui/FormMessage";
-import { ISRAEL_CITIES } from "@/lib/cities";
 import type { Profile, ProfileContact } from "@/types/database";
 
 const initialState: ProfileActionState = {};
@@ -25,16 +25,7 @@ export function ProfileForm({ profile, contact }: { profile: Profile; contact: P
 
       <FieldGroup>
         <Label htmlFor="city">עיר</Label>
-        <Select id="city" name="city" required defaultValue={profile.city}>
-          <option value="" disabled>
-            בחרו עיר
-          </option>
-          {ISRAEL_CITIES.map((city) => (
-            <option key={city} value={city}>
-              {city}
-            </option>
-          ))}
-        </Select>
+        <CityAutocomplete id="city" name="city" required defaultValue={profile.city} />
       </FieldGroup>
 
       <FieldGroup>

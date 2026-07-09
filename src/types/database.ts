@@ -251,6 +251,10 @@ export type Database = {
         Args: { max_km?: number };
         Returns: { user_id: string; distance_km: number; approx_lat: number; approx_lng: number }[];
       };
+      admin_get_user_emails: {
+        Args: Record<string, never>;
+        Returns: { id: string; email: string | null }[];
+      };
       disable_my_location: {
         Args: Record<string, never>;
         Returns: undefined;

@@ -1,11 +1,8 @@
 "use client";
 
 import { useFormStatus } from "react-dom";
-import { Button } from "@/components/ui/Button";
+import { Button, type Variant, type Size } from "@/components/ui/Button";
 import type { ButtonHTMLAttributes } from "react";
-
-type Variant = "primary" | "secondary" | "outline" | "danger" | "ghost";
-type Size = "sm" | "md" | "lg";
 
 export function SubmitButton({
   children,

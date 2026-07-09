@@ -11,15 +11,22 @@ const heebo = Heebo({
 });
 
 export const metadata: Metadata = {
-  title: "Shashot | אזור החלפת מדבקות לאספנים",
+  title: {
+    default: "Shashot | אזור החלפת מדבקות לאספנים",
+    template: "%s | Shashot",
+  },
   description:
     "פלטפורמת קהילה עצמאית לאספני מדבקות כדורגל בישראל - נהלו כפולים וחוסרים ומצאו טריידים קרובים אליכם. אינה קשורה ל-Panini, FIFA או כל מותג רשמי.",
+  // No explicit `icons` field needed - favicon.ico and apple-icon.png in
+  // src/app/ (copies of public/branding/favicon.ico and
+  // apple-touch-icon.png) are picked up automatically by Next.js's file
+  // convention, which avoids emitting a duplicate/conflicting <link> tag.
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#0ea56d",
+  themeColor: "#101c34",
 };
 
 export default function RootLayout({
