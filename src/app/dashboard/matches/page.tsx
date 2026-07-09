@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getMatchesForCurrentUser } from "@/lib/data/matches";
-import { MatchCard } from "@/components/matches/MatchCard";
+import { MatchesView } from "@/components/matches/MatchesView";
 import { Card } from "@/components/ui/Card";
 
 export const metadata = { title: "התאמות | Shashot" };
@@ -13,7 +13,7 @@ export default async function MatchesPage() {
       <h1 className="text-2xl font-extrabold">מצא טריידים קרובים</h1>
       <p className="mb-4 text-sm text-foreground/60">
         {locationEnabled
-          ? "ממוין לפי מרחק אמיתי ממך, ואז לפי כמות התאמה"
+          ? "ממוין לפי מרחק אמיתי ממך, ואז לפי כמות התאמה - כולל תצוגת מפה"
           : myCity
             ? `מציגים אספנים לפי קרבה ל${myCity} וציון התאמה`
             : "עדכנו את העיר שלכם בפרופיל כדי לשפר את הדירוג"}
@@ -27,7 +27,7 @@ export default async function MatchesPage() {
             <Link href="/dashboard/profile" className="font-bold text-brand-dark underline">
               הפרופיל שלי
             </Link>{" "}
-            כדי לראות מרחק אמיתי לכל אספן, ולקבל את ההתאמות הקרובות ביותר קודם.
+            כדי לראות מרחק אמיתי לכל אספן, לקבל את ההתאמות הקרובות ביותר קודם, ולראות אותן על המפה.
           </p>
         </Card>
       )}
@@ -43,11 +43,7 @@ export default async function MatchesPage() {
           </p>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {matches.map((match) => (
-            <MatchCard key={match.userId} match={match} />
-          ))}
-        </div>
+        <MatchesView matches={matches} locationEnabled={locationEnabled} />
       )}
     </div>
   );
