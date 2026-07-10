@@ -27,6 +27,7 @@ export function DesktopNav({ items }: { items: NavItem[] }) {
               active ? "bg-brand/10 text-brand-dark" : "text-foreground/70 hover:bg-black/5 hover:text-foreground"
             )}
           >
+            {item.icon && <span className="ml-1">{item.icon}</span>}
             {item.label}
           </Link>
         );

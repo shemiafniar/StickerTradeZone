@@ -63,8 +63,15 @@ bootstrap passes.
   platform stats (users, trades, matches, location adoption), a searchable users table with a full
   profile/edit/suspend/delete view per user, a trades table with cancel/force-complete/delete
   actions, live-computed statistics (most wanted/common stickers, most active traders, trades-per-day
-  and user-growth charts), a form to add new participating teams, and an `admin_logs` audit trail -
-  see [Admin dashboard](#admin-dashboard) below for the full breakdown.
+  and user-growth charts), a form to add new participating teams, an `admin_logs` audit trail, and a
+  bug-report inbox (see the next bullet) - see [Admin dashboard](#admin-dashboard) below for the full
+  breakdown.
+- **Support / bug reports (תקלות ומשוב)** - a dedicated tab (`/dashboard/support`) where any
+  collector can file a bug report or suggestion (subject, category, description, optional
+  screenshot), captured with the reporting user's id/name/email and the current page/user-agent
+  automatically. Every admin gets an email notification; admins triage everything from
+  `/admin/reports` (search/filter, status, an internal note never shown to the user) - see
+  [Support / bug reports](#support--bug-reports-תקלות-ומשוב) below.
 
 ### Location, chat, notifications, marketplace, sharing
 
@@ -170,30 +177,42 @@ src/
     admin/users/[id]/page.tsx               Per-user view/edit/suspend/delete
     admin/trades/page.tsx                   All trades in the system + cancel/force-complete/delete
     admin/statistics/page.tsx               Live-computed platform statistics
+    admin/reports/page.tsx                  All bug reports, search/filter by status/category
+    admin/reports/[id]/page.tsx             Full report detail, status + internal note
+    dashboard/support/page.tsx              Bug report / support ticket form ("תקלות ומשוב")
   components/
     ui/                    Shared primitives (Button, Card, Field, Skeleton, CityAutocomplete, ...)
     collection/            TeamCard, StickerGrid (tap-to-cycle grid), ColorLegend, DuplicateListingChip
     auth/ trades/ profile/  Feature UI
-    admin/                  AdminTabs, EditUserForm, DeleteUserButton, AdminTradeActions, StatCharts
+    admin/                  AdminTabs, EditUserForm, DeleteUserButton, AdminTradeActions, StatCharts,
+                            UpdateReportStatusForm
     matches/                MatchCard, MatchesView (map/list toggle), MatchesMap (Leaflet, client-only)
     location/              Location opt-in/opt-out toggle
-    notifications/         Notification bell + history list
+    notifications/         NotificationsContext (shared bell + history state), NotificationBell,
+                            NotificationHistoryList, NotificationsRootProvider (root-layout data fetch)
     scanner/                AI Scanner upload/review UI (sticker-back detection)
+    support/                SupportReportForm (bug report / support ticket form)
     share/                  Share button + share card
   lib/
     actions/               Server Actions (auth, profile, stickers, trades, chat,
-                            notifications, location, scanner, admin)
+                            notifications, location, scanner, admin, support)
     data/                  Server-side data fetchers (Supabase queries) - teams.ts, collection.ts
                             (team progress + grid + marketplace listings), matches.ts, stickers.ts,
-                            admin.ts (users/trades/stats, all admin-only pages)
+                            admin.ts (users/trades/stats, all admin-only pages), support.ts (bug reports)
+    email/                 resend.ts (dependency-free Resend client), notifyAdminsOfReport.ts
+    image/                 resizeForUpload.ts - client-side photo resize/HEIC-to-JPEG conversion
+                            for the AI Scanner (see "Sticker Scanner reliability" below)
     supabase/              Supabase client/server/proxy (session) helpers, serviceRole.ts
                             (Auth Admin API client, only for admin user-deletion)
-    vision/                Vision/OCR provider abstraction (mock + OpenAI) for the AI Scanner
+    vision/                Vision/OCR provider abstraction (mock + OpenAI) for the AI Scanner;
+                            errors.ts defines specific error types for Hebrew error-message mapping
     matching.ts            Pure, side-effect-free match-ranking algorithm (operates on sticker codes)
     cities.ts              Public API over israelLocalities.ts - city list, region/coordinate lookup
     data/israelLocalities.ts  ~1,180 Israeli localities (name + lat/lng) - see README section below
     distance.ts            Haversine display formatting, coordinate rounding, deterministic jitter
     stickerCodes.ts        Sticker code parsing/formatting/validation ("GER-2", "GER 1-3 · FRA 17")
+    supportCategories.ts   Shared category labels (used by the form, admin UI, and the admin email)
+    supportAttachmentUpload.ts  Client-side direct-to-Supabase-Storage upload for report screenshots
   types/database.ts        Hand-written Supabase Database types
   proxy.ts                 Next.js 16 "proxy" (formerly middleware) - session refresh + route guards
 .github/workflows/database.yml  Tests every migration on PRs; deploys new migrations to production
@@ -201,6 +220,7 @@ src/
 supabase/
   config.toml                        Supabase CLI project config (`supabase link`/`db push`/`start`)
   testing/auth_schema_stub.sql        Minimal auth.users/auth.uid() stand-in, CI-only (not a real project)
+  testing/storage_schema_stub.sql     Minimal storage.buckets/storage.objects stand-in, CI-only
   migrations/0001_schema.sql         Core tables, indexes, triggers, helper functions
   migrations/0002_rls_policies.sql   Core Row Level Security policies
   migrations/0003_location.sql       profile_locations table + haversine/nearby_distances RPCs
@@ -220,6 +240,10 @@ supabase/
                                         for the matches map, alongside the same real distance
   migrations/0014_admin_dashboard.sql  Admin-only trade_requests DELETE policy (previously missing
                                         entirely) + admin_get_user_emails() RPC for the users table
+  migrations/0015_scanner_reliability.sql  Defensive re-assertion of scan_events.mode's check
+                                        constraint (see "Sticker Scanner reliability" below)
+  migrations/0016_support_reports.sql  support_reports table + RLS, private support-attachments
+                                        storage bucket + RLS, get_admin_notification_emails() RPC
   diagnostics/check_auth_trigger.sql Read-only script to debug "Database error saving new user"
   seed.sql                           Local-dev-only seed data (demo users + collections + trades + chat)
 ```
@@ -632,15 +656,48 @@ Two complementary layers, chosen per action based on what's accurate and cheap:
 The AI Scanner also validates uploads both client-side (`ImageDropzone`) and server-side
 (`src/lib/actions/scanner.ts`): file type is restricted to an explicit allow-list (JPEG/PNG/WEBP/HEIC
 - no SVG or other exotic formats) and size is capped at 8MB, with a clear Hebrew error message for
-each failure case.
+each failure case. Support report creation (`src/lib/actions/support.ts`) has the same kind of
+DB-backed limit (10/hour/user).
 
-### Adding real push/email notifications later
+### In-app notifications vs. email
 
 `notifications` rows carry a `dispatched_channels text[]` column (defaults to `{inapp}`). A future
-background worker can add push/email delivery by polling for rows missing `'push'`/`'email'` in
-that array, sending them, and appending the channel name - no schema changes needed. All
-notification-creation logic already lives in one place (`create_notification()` in
-`0005_notifications.sql`), called from triggers on `trade_requests` and `trade_messages`.
+background worker can add push/email delivery for these *in-app* notifications (new trade request,
+accepted/declined, new chat message) by polling for rows missing `'push'`/`'email'` in that array,
+sending them, and appending the channel name - no schema changes needed. All notification-creation
+logic already lives in one place (`create_notification()` in `0005_notifications.sql`), called from
+triggers on `trade_requests` and `trade_messages`.
+
+Separately, this app *does* now send one kind of real email: every admin gets notified by email when
+a user submits a bug report (see [Support / bug reports](#support--bug-reports-תקלות-ומשוב) below) -
+via a small, dependency-free Resend client (`src/lib/email/resend.ts`). That's genuinely reusable
+infrastructure for the `dispatched_channels` worker described above whenever it's built - the same
+`sendEmail()` function, just called from a different trigger.
+
+### Marking notifications as read: a shared client store, not just a server round-trip
+
+The header's notification bell (`NotificationBell.tsx`) and the full history page
+(`NotificationHistoryList.tsx`) are two independent client components mounted as siblings under the
+root layout (the header wraps every page; the history page is just one page's content) - each used
+to hold its **own** local copy of the notification list/unread count, seeded once from a server
+fetch. That's the root cause behind "מסמן הכל כנקרא" on the notifications page not visibly updating
+the header's badge: marking everything read from the page updated *that page's* local state (and the
+database), but the header's *separate* local state had no way to find out, short of a full
+navigation happening to re-trigger both components' server-side data fetch at the same moment.
+
+The fix is `src/components/notifications/NotificationsContext.tsx` - a single React Context,
+provided once at the root layout (`NotificationsRootProvider.tsx`, wrapping the header, page content,
+*and* footer), holding one shared `notifications`/`unreadCount` state that both `NotificationBell`
+and `NotificationHistoryList` read from and mutate through the same `markAsRead()`/`markAllAsRead()`
+functions - so an action taken in either one is instantly visible in the other, no navigation or
+revalidation needed. Both mutations are optimistic (the UI updates immediately) and roll back with a
+clear Hebrew error message if the underlying Server Action fails - see
+`src/lib/actions/notifications.ts`, which now actually checks the `mark_all_notifications_read()`/
+`mark_notification_read()` RPC calls' `error` field (previously ignored entirely, so a failure was
+silently swallowed with no visible symptom other than "the button doesn't seem to do anything").
+Both RPCs remain `SECURITY DEFINER` functions scoped to `user_id = auth.uid()` internally (see
+`0005_notifications.sql`) - server-side authorization was never the gap here, error handling and
+shared client state were.
 
 ### Adding real GPS/location distance later (already done, but for reference)
 
@@ -740,6 +797,55 @@ in `data/admin.ts`), nothing hardcoded. Rendered with plain CSS bars/columns
 (`src/components/admin/StatCharts.tsx`) rather than a charting library, to avoid an extra dependency
 for a handful of simple ranked lists and daily counts.
 
+### Support / bug reports (תקלות ומשוב)
+
+Any signed-in collector can file a report from **תקלות ומשוב** in the main nav (`/dashboard/support`,
+`SupportReportForm.tsx`) - subject, category (technical/trade/matches/scanner/notifications/
+suggestion/other), a detailed description, an optional screenshot, and an optional page URL
+(pre-filled with the current page, editable). User id, name, and email are resolved **server-side**
+from the authenticated session (`auth.getUser()`), not trusted from client input; current
+date/time is the row's `created_at` default; the browser's user-agent and the page URL are the only
+two fields that genuinely can only come from the client, so those are captured into hidden form
+fields on mount. The submit button is disabled for the whole submission (attachment upload, then
+the Server Action itself) to prevent duplicate submissions, and there's also a DB-backed rate limit
+(10 reports/hour/user) as a second line of defense.
+
+**Screenshot attachments** upload directly from the browser to a private `support-attachments`
+Supabase Storage bucket (`uploadSupportAttachment()` in `src/lib/supportAttachmentUpload.ts`), using
+the signed-in user's own session - never through the Server Action, which only ever receives the
+resulting *storage path* (a short string), not the file's bytes. Storage RLS
+(`0016_support_reports.sql`) restricts every user to their own folder
+(`<user_id>/<filename>`) for both uploads and reads, with an admin-only override for reading anyone's
+attachment. The action re-validates that path prefix server-side too, as defense in depth beyond RLS.
+Viewing an attachment always requires generating a short-lived signed URL
+(`getReportAttachmentSignedUrl()` in `src/lib/data/support.ts`) - there is never a plain public URL,
+since the bucket is private.
+
+**Admins** manage every report from `/admin/reports` (search by subject/name/email, filter by status
+and category) and `/admin/reports/[id]` (full metadata, the attachment if any, and a form to update
+status - `open`/`in_progress`/`resolved`/`closed` - and an internal admin note). The admin note is
+never selected by, or exposed to, the reporting user - RLS (`support_reports_select`) lets a
+non-admin see their own report row (including the `admin_note` *column* existing in the schema), but
+the UI simply never surfaces it anywhere on the user-facing side, and there's no user-facing page
+that even fetches a single report by id to render it. Reports are otherwise immutable from the
+reporting user's side once filed (a normal support-ticket UX) - only an admin can update status/note
+(`support_reports_update_admin` RLS policy).
+
+**Email notifications**: whenever a report is saved, every admin gets an email (subject, category,
+description, reporter, date/time, page URL, and a direct link into `/admin/reports/[id]`) via Resend
+(`src/lib/email/resend.ts`, `notifyAdminsOfReport.ts`) - see
+[Required environment variables](#6-configure-environment-variables) for `RESEND_API_KEY`. Admin
+emails are resolved via a new, narrowly-scoped RPC, `get_admin_notification_emails()`
+(`0016_support_reports.sql`): unlike the existing `admin_get_user_emails()` (which requires the
+*caller* to already be an admin - the reporting user filing this specific report usually isn't), this
+one is callable by any authenticated user, but its query is self-scoped to only ever return emails
+belonging to `role = 'admin'` accounts - never the full user list, and never something the caller
+can widen. **The report is always saved first**; the email step runs afterward inside its own
+try/catch (on top of `notifyAdminsOfNewReport()`'s own internal one), so a Resend outage, a missing
+`RESEND_API_KEY`, or any other email-delivery failure is logged (`[email]`-tagged, no API key ever
+logged) and swallowed - never turns an already-successful submission into an error response, and
+never loses the report itself.
+
 ### Swapping the AI Scanner's Vision provider
 
 `src/lib/vision/types.ts` defines a single `VisionProvider` interface with one method,
@@ -750,6 +856,70 @@ backend (Google Cloud Vision, a custom model, etc.), implement the interface and
 `getVisionProvider()` - nothing in `src/lib/actions/scanner.ts` or the UI needs to change. Detected
 stickers are marked `status = 'have'` (green) in `user_stickers`, unless already marked `'duplicate'`
 (blue) - a scan never silently removes a sticker from someone's marketplace listings.
+
+### Sticker Scanner reliability: root cause + fixes
+
+**The actual root cause** of "the scanner fails after every uploaded image": Next.js's Server
+Action request body limit defaults to **1MB**, and `next.config.ts` never configured
+`experimental.serverActions.bodySizeLimit` - so virtually every real phone photo (the scanner
+accepts up to 8MB) was rejected by Next.js itself, before `scanStickerBacksAction`'s own code ever
+ran. This is now set to `"10mb"` (with `experimental.proxyClientMaxBodySize` set alongside it for
+Next.js 16's internal proxy layer) - see the comment in `next.config.ts`.
+
+**A related, deliberate mitigation, not just a body-size bump**: every photo is now resized/
+re-encoded to a modest JPEG *client-side*, before it's ever attached to the upload form
+(`src/lib/image/resizeForUpload.ts`, wired into `ScannerApp.tsx`). This solves three things at once:
+
+- **Body size**: a photo downscaled to ≤1600px on its longest side and re-encoded as JPEG is almost
+  always well under 1MB regardless of the original - a much bigger safety margin than raising one
+  config value alone, especially since Vercel's own serverless function payload limit is a separate,
+  platform-level ceiling this repo can't configure (see "Manual production verification" below).
+- **HEIC support ("if the application is intended to support mobile uploads")**: iOS's default
+  camera format (HEIC) isn't accepted by OpenAI's Vision API, and there's no reliable pure-JS HEIC
+  decoder for a Vercel serverless runtime. Instead, `createImageBitmap()` - which iOS/Safari can
+  decode HEIC through *natively* (the OS-level image codec, not a JS/WASM one) - decodes the photo
+  client-side, which is then re-encoded to JPEG via `<canvas>`. Browsers that can't decode HEIC (most
+  non-Apple browsers) get one specific, clear Hebrew error instead of a confusing failure three steps
+  later in the pipeline.
+- **Consistency**: every image the backend ever receives from this flow is already a valid,
+  reasonably-sized JPEG - the broad JPEG/PNG/WEBP/HEIC allow-list in `scanner.ts` only remains as a
+  defensive backstop, not something the happy path depends on.
+
+**A secondary, defensive finding**: this project has a documented history of individual migrations
+not reliably reaching production before CI/CD automation existed (see below) - `scan_events.mode`'s
+check constraint was widened by `0011_shashot_teams.sql` to allow the scanner's current
+`'sticker_backs'` value (it originally only allowed old `'duplicates'`/`'album'` modes). If a given
+production database somehow still had the pre-`0011` constraint, every scan attempt would fail on
+the rate-limit log insert with a Postgres check-constraint violation - exactly the kind of failure
+that used to become this app's generic error boundary before the error-handling pass below.
+`0015_scanner_reliability.sql` just re-asserts the correct constraint, idempotently - a no-op if
+`0011` already applied cleanly, a real fix if it somehow didn't.
+
+**Error handling, not a generic fallback**: `scanStickerBacksAction` previously had several calls
+(`getVisionProvider()`, `requireAuth()`, `readImage()`, `checkAndLogScan()`) outside its one
+try/catch, and the try/catch it did have returned the *raw* caught error message verbatim
+(`err.message`) - an English stack trace or a raw OpenAI HTTP error body, not a Hebrew message, and
+never logged server-side first. Now:
+
+- The whole action body is wrapped in a top-level try/catch, so nothing can become an uncaught
+  exception that surfaces the app's generic `error.tsx` boundary (`"משהו השתבש"`) instead of a real,
+  actionable message.
+- `src/lib/vision/errors.ts` defines specific error types (`VisionApiError` with an HTTP status,
+  `VisionTimeoutError`, `VisionParseError`) that `openaiProvider.ts` throws instead of a generic
+  `Error` - `toUserFacingScanError()` in `scanner.ts` maps each to a distinct Hebrew message (auth
+  misconfigured, provider busy/down, request timed out, couldn't parse the AI's response, or
+  couldn't identify stickers in a clear photo) instead of one catch-all string.
+- The raw technical detail (HTTP status, truncated response body, stack trace) is always logged via
+  `console.error` first, tagged `[scanner]` - server-side only, never sent to the client, and never
+  including the image bytes or the `OPENAI_API_KEY` itself.
+- An explicit 25-second timeout (`AbortController`) wraps the OpenAI request, so a hung upstream call
+  can't run until Vercel's own function timeout kills it with an opaque platform-level error instead.
+- GPT models occasionally wrap their JSON response in a ` ```json ... ``` ` markdown fence even when
+  told not to - `openaiProvider.ts` strips that before parsing instead of treating it as a hard
+  failure.
+- Zero detected stickers is **not** an error (a photo that genuinely has no readable sticker backs is
+  a normal outcome) - the action still returns success, and `ScannerApp.tsx` shows a specific "no
+  stickers detected, try a clearer photo" message instead of silently showing nothing.
 
 ## Automated database migrations (CI/CD)
 
@@ -871,8 +1041,10 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 12. `supabase/migrations/0012_worldcup2026_teams.sql`
 13. `supabase/migrations/0013_matches_map.sql`
 14. `supabase/migrations/0014_admin_dashboard.sql`
+15. `supabase/migrations/0015_scanner_reliability.sql`
+16. `supabase/migrations/0016_support_reports.sql`
 
-All 14 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 16 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
 inserts/updates are required, including for your first admin account (see step 4) or the sticker
@@ -976,6 +1148,13 @@ Optional:
   project's **Settings → API → service_role key** (marked "secret"). **Never** expose this to the
   client, prefix it with `NEXT_PUBLIC_`, or commit it - it bypasses Row Level Security entirely. See
   [Admin dashboard](#admin-dashboard) above for exactly how/where it's used.
+- `RESEND_API_KEY` / `SUPPORT_NOTIFICATIONS_FROM_EMAIL` - enables the "email every admin when a bug
+  report is submitted" notification (see
+  [Support / bug reports](#support--bug-reports-תקלות-ומשוב) above). Get a key from
+  [resend.com/api-keys](https://resend.com/api-keys); `SUPPORT_NOTIFICATIONS_FROM_EMAIL` should be a
+  verified sender on your Resend account/domain (e.g. `"Shashot <support@yourdomain.com>"`). Leaving
+  either unset doesn't break anything else - the report itself is always saved and the user always
+  sees a success confirmation either way; only the admin email is skipped (logged, not thrown).
 
 ### 7. Install dependencies & run
 
@@ -996,7 +1175,7 @@ system automatically generates that team's 20 stickers (`CODE-1` through `CODE-2
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 14 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 16 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`) to get the initial schema in place. Do **not** run `seed.sql`
    against it (it has a built-in guard that refuses to run if it detects any non-demo account already
    exists, but the safest rule is simply: don't run it against a hosted project at all).
@@ -1019,6 +1198,9 @@ system automatically generates that team's 20 stickers (`CODE-1` through `CODE-2
    - `OPENAI_API_KEY` (optional, enables real AI Scanner detection)
    - `SUPABASE_SERVICE_ROLE_KEY` (optional, only needed for the admin "delete user" action - see
      [Configure environment variables](#6-configure-environment-variables) above)
+   - `RESEND_API_KEY` / `SUPPORT_NOTIFICATIONS_FROM_EMAIL` (optional, only needed for the "email
+     admins when a bug report is submitted" notification - see
+     [Configure environment variables](#6-configure-environment-variables) above)
 5. Deploy. No build-time secrets or server infra beyond Supabase + Vercel (+ GitHub Actions for step
    2) are required - there's no custom server, cron job, or queue in this Beta.
 6. Sign up through the live app. **You're automatically an admin** - nothing else to configure. The
@@ -1031,7 +1213,7 @@ visits or manual profile/role edits, for this release or any future one.
 ### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 14 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+- ✅ All 16 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
   times, including a full clean-room run for this pass) with zero errors.
 - ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
   Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
@@ -1130,7 +1312,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] On a brand new Supabase project (only the 14 migrations run, no seed, no manual SQL), register
+- [ ] On a brand new Supabase project (only the 16 migrations run, no seed, no manual SQL), register
       the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
@@ -1217,6 +1399,39 @@ third-party share sheets) can't be fully exercised in CI:
       double `"... | Shashot | Shashot"` suffix)
 - [ ] On iOS Safari, "Add to Home Screen" and confirm the new dark-navy app icon is used (not a
       screenshot thumbnail)
+- [ ] Receive a new trade/chat notification, then click "סמן הכל כנקרא" from the bell dropdown -
+      confirm the badge clears immediately; separately, open `/dashboard/notifications` and click
+      "סמן הכל כנקרא" there instead - confirm **the header's badge also clears immediately**,
+      without navigating anywhere or refreshing; reload the page afterward and confirm everything is
+      still marked read (i.e. it actually persisted, not just a client-side illusion)
+- [ ] Temporarily break the mark-all RPC (e.g. revoke its grant in the SQL Editor) and confirm
+      clicking "סמן הכל כנקרא" shows a Hebrew error message and the unread items revert (rather than
+      silently doing nothing or showing an English error) - then restore the grant
+- [ ] From a real iPhone (Safari), open the AI Scanner, take a photo directly with the in-page camera
+      capture, and confirm it scans successfully (this is the exact HEIC-by-default path that used to
+      fail) - also try picking an existing large photo from the camera roll
+- [ ] From a desktop browser, upload a large (5-8MB) JPG/PNG - confirm the "מעבד תמונה..." step
+      completes quickly and the scan proceeds (this used to fail outright before the
+      `bodySizeLimit`/client-resize fix)
+- [ ] Upload a non-image file (e.g. a PDF renamed to `.jpg`, or an actual PDF) and confirm a specific
+      Hebrew "unsupported format" message, not a generic crash
+- [ ] Photograph something with no visible sticker backs (e.g. a blank wall) and confirm the scanner
+      completes successfully and shows "לא זוהו מדבקות בתמונה" rather than an error or a silent no-op
+- [ ] If `OPENAI_API_KEY` is configured, temporarily set it to an invalid value and confirm scanning
+      shows a specific "שירות הזיהוי החכם אינו מוגדר כרגע כראוי" message (not a raw API error)
+- [ ] From `/dashboard/support`, submit a report with every field filled in, including a screenshot -
+      confirm the success message, and (if `RESEND_API_KEY` is configured) that every admin account
+      receives an email with the report's details and a working link into `/admin/reports/[id]`
+- [ ] Submit a report *without* a screenshot and confirm it still succeeds
+- [ ] Submit a report as a non-admin, then confirm that account **cannot** browse to another user's
+      report by guessing/changing the `/admin/reports/[id]` URL (should redirect, matching the
+      existing `/admin/*` guard) - then, as an admin, confirm the same report **is** visible from
+      `/admin/reports`, along with its category/description/attachment/page URL/user-agent
+- [ ] As an admin, change a report's status and add an internal note, save, then reload the page and
+      confirm both persisted; log in as the reporting user and confirm the internal note is nowhere
+      visible to them
+- [ ] Confirm "תקלות ומשוב" appears in both the desktop and mobile nav while signed in, with its icon,
+      and does **not** appear anywhere in the logged-out landing-page nav
 
 **Security spot-checks** (safe to do with two browser profiles / incognito windows)
 
@@ -1235,7 +1450,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 14 migrations in order, confirm no errors, do **not** run
+- [ ] Fresh Supabase project: run all 16 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
 - [ ] `select count(*) from public.teams;` returns exactly 48, and "האוסף שלי" shows 48 team cards,
@@ -1262,6 +1477,27 @@ third-party share sheets) can't be fully exercised in CI:
 
 ## Known limitations / TODOs for future releases
 
+- **Vercel's own serverless function payload limit is a separate ceiling this repo can't configure.**
+  `next.config.ts`'s `serverActions.bodySizeLimit`/`proxyClientMaxBodySize` (fixed as part of the
+  Scanner reliability work above) control Next.js's own request-body guard, but Vercel's platform
+  itself has historically capped serverless function request bodies around ~4.5MB depending on plan/
+  region - a setting controlled in your Vercel project, not in this codebase. The client-side photo
+  resize (`resizeImageForUpload.ts`, ≤1600px JPEG, almost always well under 1MB) makes this a
+  non-issue in practice for the AI Scanner's happy path, but if you ever raise
+  `MAX_IMAGE_BYTES`/`bodySizeLimit` further, verify your Vercel plan's actual limit too.
+- **HEIC support for the AI Scanner relies on the *browser's* HEIC decoder** (via
+  `createImageBitmap()`), which works on iOS/Safari (including other iOS browsers, all WebKit-based)
+  but not on most non-Apple browsers - those get a clear, specific Hebrew error instead of a silent
+  failure, but can't scan a HEIC photo without first converting it themselves. A server-side WASM
+  HEIC decoder (e.g. `heic-convert`/`libheif-js`, no native compilation needed - safe for Vercel) is
+  a reasonable follow-up if this becomes a real support burden.
+- **Admin bug-report email notifications require `RESEND_API_KEY`** to actually send (see
+  [Support / bug reports](#support--bug-reports-תקלות-ומשוב) above) - every report is still saved and
+  every user still sees a normal success confirmation without it; only the email step is skipped
+  (logged, not thrown). No other part of this app has ever sent email beyond what Supabase Auth
+  itself sends (confirmation/magic link), so this is the first real integration of that kind - a
+  natural foundation if trade/chat notification *emails* (as opposed to in-app-only, see
+  ["In-app notifications vs. email"](#in-app-notifications-vs-email) above) are ever built.
 - **The current `public/branding/` PNGs are a close recreation of the finalized logo, not an export
   of the original source file.** The design tool available in this environment couldn't ingest the
   brand assets provided as chat attachments directly (no way to save an inline chat image to disk

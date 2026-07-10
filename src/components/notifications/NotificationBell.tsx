@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { markAllNotificationsReadAction, markNotificationReadAction } from "@/lib/actions/notifications";
+import { useNotifications } from "@/components/notifications/NotificationsContext";
+import { useClickOutside } from "@/lib/useClickOutside";
 import type { Notification } from "@/types/database";
 
 function timeAgo(iso: string): string {
@@ -26,80 +26,34 @@ const notificationIcons: Record<string, string> = {
   new_match: "📍",
 };
 
-export function NotificationBell({
-  userId,
-  initialNotifications,
-  initialUnreadCount,
-}: {
-  userId: string;
-  initialNotifications: Notification[];
-  initialUnreadCount: number;
-}) {
+const BELL_DROPDOWN_LIMIT = 15;
+
+export function NotificationBell() {
+  const { notifications, unreadCount, isMarkingAll, markAsRead, markAllAsRead } = useNotifications();
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState(initialNotifications);
-  const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
-  const [syncedInitial, setSyncedInitial] = useState({ initialNotifications, initialUnreadCount });
+  const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
-  // Re-sync when the server sends fresh initial data (e.g. after a full
-  // navigation re-renders SiteHeader) without needing an effect - this is
-  // React's documented "adjust state during render" pattern, not a
-  // side effect, so it doesn't cause an extra commit/flash.
-  if (
-    syncedInitial.initialNotifications !== initialNotifications ||
-    syncedInitial.initialUnreadCount !== initialUnreadCount
-  ) {
-    setSyncedInitial({ initialNotifications, initialUnreadCount });
-    setNotifications(initialNotifications);
-    setUnreadCount(initialUnreadCount);
-  }
-
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel(`notifications:${userId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
-        (payload) => {
-          const notification = payload.new as Notification;
-          setNotifications((prev) => [notification, ...prev].slice(0, 30));
-          setUnreadCount((prev) => prev + 1);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [userId]);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  useClickOutside(containerRef, () => setOpen(false));
 
   async function handleNotificationClick(notification: Notification) {
     if (!notification.read_at) {
-      setNotifications((prev) => prev.map((n) => (n.id === notification.id ? { ...n, read_at: new Date().toISOString() } : n)));
-      setUnreadCount((prev) => Math.max(0, prev - 1));
-      await markNotificationReadAction(notification.id);
+      const result = await markAsRead(notification.id);
+      if (result.error) setError(result.error);
     }
     setOpen(false);
     if (notification.link) router.push(notification.link);
+    else router.refresh();
   }
 
   async function handleMarkAllRead() {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read_at: n.read_at ?? new Date().toISOString() })));
-    setUnreadCount(0);
-    await markAllNotificationsReadAction();
+    setError(null);
+    const result = await markAllAsRead();
+    if (result.error) setError(result.error);
   }
+
+  const visibleNotifications = notifications.slice(0, BELL_DROPDOWN_LIMIT);
 
   return (
     <div className="relative" ref={containerRef}>
@@ -128,17 +82,23 @@ export function NotificationBell({
           <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
             <p className="text-sm font-bold">התראות</p>
             {unreadCount > 0 && (
-              <button onClick={handleMarkAllRead} className="text-xs font-bold text-brand-dark">
-                סמן הכל כנקרא
+              <button
+                onClick={handleMarkAllRead}
+                disabled={isMarkingAll}
+                className="text-xs font-bold text-brand-dark disabled:opacity-50"
+              >
+                {isMarkingAll ? "מסמן..." : "סמן הכל כנקרא"}
               </button>
             )}
           </div>
 
+          {error && <p className="border-b border-black/5 bg-red-50 px-4 py-2 text-xs font-medium text-red-700">{error}</p>}
+
           <div className="max-h-96 overflow-y-auto">
-            {notifications.length === 0 ? (
+            {visibleNotifications.length === 0 ? (
               <p className="p-6 text-center text-sm text-foreground/50">אין עדיין התראות</p>
             ) : (
-              notifications.map((notification) => (
+              visibleNotifications.map((notification) => (
                 <button
                   key={notification.id}
                   onClick={() => handleNotificationClick(notification)}

@@ -7,6 +7,8 @@ import { usePathname } from "next/navigation";
 export interface NavItem {
   href: string;
   label: string;
+  /** Optional short icon/emoji shown before the label - most nav items don't set this. */
+  icon?: string;
 }
 
 export function MobileNav({
@@ -50,6 +52,7 @@ export function MobileNav({
                   pathname === item.href ? "bg-brand/10 text-brand-dark" : "text-foreground/80"
                 }`}
               >
+                {item.icon && <span className="ml-1.5">{item.icon}</span>}
                 {item.label}
               </Link>
             ))}

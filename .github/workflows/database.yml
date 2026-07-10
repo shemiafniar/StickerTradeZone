@@ -53,6 +53,9 @@ jobs:
       - name: Simulate Supabase's auth schema (auth.users / auth.uid())
         run: psql -v ON_ERROR_STOP=1 -f supabase/testing/auth_schema_stub.sql
 
+      - name: Simulate Supabase's storage schema (storage.buckets / storage.objects)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/testing/storage_schema_stub.sql
+
       - name: Apply every migration, in order
         run: |
           set -e

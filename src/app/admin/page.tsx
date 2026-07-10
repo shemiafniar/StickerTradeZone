@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { getAdminStats } from "@/lib/data/admin";
+import { getAdminReportCounts } from "@/lib/data/support";
 import { Card } from "@/components/ui/Card";
 
 export const metadata = { title: "אזור ניהול" };
 
 export default async function AdminOverviewPage() {
-  const stats = await getAdminStats();
+  const [stats, reportCounts] = await Promise.all([getAdminStats(), getAdminReportCounts()]);
 
   const items = [
     { label: "סה\"כ משתמשים רשומים", value: stats.totalUsers, icon: "👥" },
@@ -16,6 +17,7 @@ export default async function AdminOverviewPage() {
     { label: "טריידים פתוחים", value: stats.pendingTradeRequests, icon: "⏳" },
     { label: "טריידים שהושלמו", value: stats.completedTradeRequests, icon: "🏆" },
     { label: "סה\"כ התאמות פעילות", value: stats.totalMatches, icon: "🔗" },
+    { label: "דיווחי תקלות פתוחים", value: reportCounts.open + reportCounts.inProgress, icon: "🛟" },
   ];
 
   return (
@@ -51,6 +53,13 @@ export default async function AdminOverviewPage() {
             <p className="text-2xl">📊</p>
             <p className="mt-1 font-bold">סטטיסטיקות</p>
             <p className="text-xs text-foreground/60">מדבקות מבוקשות, אספנים פעילים, צמיחה</p>
+          </Card>
+        </Link>
+        <Link href="/admin/reports">
+          <Card interactive>
+            <p className="text-2xl">🛟</p>
+            <p className="mt-1 font-bold">דיווחי תקלות</p>
+            <p className="text-xs text-foreground/60">צפייה בכל הדיווחים, סינון, עדכון סטטוס והערות</p>
           </Card>
         </Link>
       </div>
