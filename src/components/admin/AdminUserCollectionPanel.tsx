@@ -5,12 +5,14 @@ import { cn } from "@/lib/cn";
 import type { AdminUserCollectionDetail, StickerRowState } from "@/lib/data/admin";
 
 const STATE_LABELS: Record<StickerRowState, string> = {
+  none: "לא מסומן",
   missing: "חסר",
   owned: "יש (ללא כפולות)",
   owned_with_duplicates: "יש + כפולות",
 };
 
 const STATE_BADGE_CLASS: Record<StickerRowState, string> = {
+  none: "bg-black/5 text-foreground/50",
   missing: "bg-red-100 text-red-700",
   owned: "bg-green-100 text-green-700",
   owned_with_duplicates: "bg-blue-100 text-blue-700",
@@ -42,7 +44,7 @@ export function AdminUserCollectionPanel({ detail }: { detail: AdminUserCollecti
         sorted.sort((a, b) => a.state.localeCompare(b.state) || a.code.localeCompare(b.code));
         break;
       case "quantity":
-        sorted.sort((a, b) => b.quantity - a.quantity || a.code.localeCompare(b.code));
+        sorted.sort((a, b) => (b.quantity ?? -1) - (a.quantity ?? -1) || a.code.localeCompare(b.code));
         break;
       default:
         sorted.sort((a, b) => a.code.localeCompare(b.code));
@@ -113,6 +115,7 @@ export function AdminUserCollectionPanel({ detail }: { detail: AdminUserCollecti
             <option value="owned">יש (ללא כפולות)</option>
             <option value="owned_with_duplicates">יש + כפולות</option>
             <option value="missing">חסר</option>
+            <option value="none">לא מסומן</option>
           </select>
           <select
             value={sortKey}
@@ -144,8 +147,8 @@ export function AdminUserCollectionPanel({ detail }: { detail: AdminUserCollecti
                     {s.code}
                   </td>
                   <td className="p-2 text-foreground/60">{s.teamNameHe}</td>
-                  <td className="p-2">{s.quantity}</td>
-                  <td className="p-2">{s.availableDuplicates}</td>
+                  <td className="p-2">{s.quantity ?? "–"}</td>
+                  <td className="p-2">{s.quantity === null ? "–" : s.availableDuplicates}</td>
                   <td className="p-2">
                     <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", STATE_BADGE_CLASS[s.state])}>
                       {STATE_LABELS[s.state]}
