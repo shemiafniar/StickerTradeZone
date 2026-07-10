@@ -4,9 +4,8 @@ import { TeamFlag } from "@/components/collection/TeamFlag";
 import type { TeamProgress } from "@/lib/data/collection";
 
 export function TeamCard({ team }: { team: TeamProgress }) {
-  const owned = team.have + team.duplicate;
-  const pct = team.total > 0 ? Math.round((owned / team.total) * 100) : 0;
-  const isComplete = owned >= team.total;
+  const pct = team.total > 0 ? Math.round((team.owned / team.total) * 100) : 0;
+  const isComplete = team.owned >= team.total;
 
   return (
     <Link href={`/dashboard/stickers/${team.code.toLowerCase()}`} className="block">
@@ -29,7 +28,7 @@ export function TeamCard({ team }: { team: TeamProgress }) {
           </div>
           <div className="mt-1.5 flex items-center justify-between text-xs text-foreground/50">
             <span>
-              {owned}/{team.total}
+              {team.owned}/{team.total}
             </span>
             {team.missing > 0 && <span className="font-bold text-red-500">{team.missing} חסרות</span>}
           </div>

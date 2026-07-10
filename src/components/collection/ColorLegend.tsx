@@ -2,8 +2,8 @@ import { cn } from "@/lib/cn";
 
 const ITEMS: { color: string; label: string }[] = [
   { color: "bg-black/10", label: "לא מסומן" },
-  { color: "bg-green-500", label: "יש לי" },
-  { color: "bg-blue-500", label: "כפול/להחלפה" },
+  { color: "bg-green-500", label: "יש לי (ללא כפולות)" },
+  { color: "bg-blue-500", label: "יש לי + כפולות להחלפה" },
   { color: "bg-red-500", label: "חסר לי" },
 ];
 
