@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetchAllRows";
 import { getStickerIdToCodeMap } from "@/lib/data/stickers";
 import {
   availableDuplicates,
@@ -31,14 +32,34 @@ export interface AdminUserRow extends Profile {
   matchesCount: number;
 }
 
-/** Case-insensitive search across name, email, and city - beta-scale, so filtering client-side after one fetch is fine. */
+/**
+ * Case-insensitive search across name, email, and city - beta-scale, so
+ * filtering client-side after one fetch is fine.
+ *
+ * IMPORTANT: `profiles`/`user_stickers`/`trade_requests` are fetched with
+ * fetchAllRows() (paginated via .range()), not a single .select() - a bare
+ * .select() silently truncates to Supabase's default 1000-row cap with no
+ * error, so once the platform has enough collectors/stickers/trades to
+ * cross that line, a plain .select() would start dropping rows for
+ * whichever users happen to land past the cutoff - showing them (and only
+ * them) as having an empty/stale collection here, no matter how correct
+ * the aggregation logic below is. This was the actual root cause of
+ * "the admin panel still shows a collector's old totals after they update
+ * their collection" - see fetchAllRows.ts's doc comment.
+ */
 export async function getAdminUsers(searchTerm?: string): Promise<AdminUserRow[]> {
   const supabase = await createClient();
 
-  const [{ data: profiles }, { data: userStickers }, { data: trades }, { data: emailRows }] = await Promise.all([
-    supabase.from("profiles").select("*").order("created_at", { ascending: false }),
-    supabase.from("user_stickers").select("user_id, quantity"),
-    supabase.from("trade_requests").select("from_user_id, to_user_id"),
+  const [profiles, userStickers, trades, { data: emailRows }] = await Promise.all([
+    fetchAllRows<Profile>((from, to) =>
+      supabase.from("profiles").select("*").order("created_at", { ascending: false }).range(from, to)
+    ),
+    fetchAllRows<Pick<UserSticker, "user_id" | "quantity">>((from, to) =>
+      supabase.from("user_stickers").select("user_id, quantity").range(from, to)
+    ),
+    fetchAllRows<Pick<TradeRequest, "from_user_id" | "to_user_id">>((from, to) =>
+      supabase.from("trade_requests").select("from_user_id, to_user_id").range(from, to)
+    ),
     supabase.rpc("admin_get_user_emails"),
   ]);
 
@@ -49,20 +70,20 @@ export async function getAdminUsers(searchTerm?: string): Promise<AdminUserRow[]
   // be reimplemented ad hoc (that drift is exactly what caused admin
   // statistics to disagree with what collectors actually see).
   const quantitiesByUser = new Map<string, number[]>();
-  for (const row of (userStickers as Pick<UserSticker, "user_id" | "quantity">[]) ?? []) {
+  for (const row of userStickers) {
     if (!quantitiesByUser.has(row.user_id)) quantitiesByUser.set(row.user_id, []);
     quantitiesByUser.get(row.user_id)!.push(row.quantity);
   }
 
   const tradeCounts = new Map<string, number>();
-  for (const t of (trades as Pick<TradeRequest, "from_user_id" | "to_user_id">[]) ?? []) {
+  for (const t of trades) {
     tradeCounts.set(t.from_user_id, (tradeCounts.get(t.from_user_id) ?? 0) + 1);
     tradeCounts.set(t.to_user_id, (tradeCounts.get(t.to_user_id) ?? 0) + 1);
   }
 
   const matchCountByUser = await getMatchCountsByUser();
 
-  let rows = ((profiles as Profile[]) ?? []).map((p) => {
+  let rows = profiles.map((p) => {
     const counts = summarizeQuantities(quantitiesByUser.get(p.id) ?? []);
     return {
       ...p,
@@ -118,16 +139,19 @@ export interface AdminStats {
 export async function getAdminStats(): Promise<AdminStats> {
   const supabase = await createClient();
 
-  const [profiles, userStickers, trades, matchCounts] = await Promise.all([
-    supabase.from("profiles").select("status, location_enabled"),
-    supabase.from("user_stickers").select("quantity"),
-    supabase.from("trade_requests").select("status"),
+  // Paginated - see the doc comment on getAdminUsers() for why a bare
+  // .select() here would silently under-count once the platform grows
+  // past 1000 rows in any of these tables.
+  const [profileRows, stickerRows, tradeRows, matchCounts] = await Promise.all([
+    fetchAllRows<{ status: string; location_enabled: boolean }>((from, to) =>
+      supabase.from("profiles").select("status, location_enabled").range(from, to)
+    ),
+    fetchAllRows<Pick<UserSticker, "quantity">>((from, to) =>
+      supabase.from("user_stickers").select("quantity").range(from, to)
+    ),
+    fetchAllRows<{ status: string }>((from, to) => supabase.from("trade_requests").select("status").range(from, to)),
     getMatchCountsByUser(),
   ]);
-
-  const profileRows = (profiles.data as { status: string; location_enabled: boolean }[]) ?? [];
-  const stickerRows = (userStickers.data as Pick<UserSticker, "quantity">[]) ?? [];
-  const tradeRows = (trades.data as { status: string }[]) ?? [];
 
   // Every mutual match is counted once per participant by getMatchCountsByUser(),
   // so summing and halving gives the number of distinct matching pairs.
@@ -159,19 +183,21 @@ export async function getAdminStats(): Promise<AdminStats> {
  */
 async function getMatchCountsByUser(): Promise<Map<string, number>> {
   const supabase = await createClient();
-  const [{ data: profiles }, { data: userStickers }, idToCode] = await Promise.all([
-    supabase.from("profiles").select("id, status"),
-    supabase.from("user_stickers").select("user_id, sticker_id, quantity"),
+  const [profiles, userStickers, idToCode] = await Promise.all([
+    fetchAllRows<Pick<Profile, "id" | "status">>((from, to) =>
+      supabase.from("profiles").select("id, status").range(from, to)
+    ),
+    fetchAllRows<Pick<UserSticker, "user_id" | "sticker_id" | "quantity">>((from, to) =>
+      supabase.from("user_stickers").select("user_id, sticker_id, quantity").range(from, to)
+    ),
     getStickerIdToCodeMap(),
   ]);
 
-  const activeUserIds = ((profiles as Pick<Profile, "id" | "status">[]) ?? [])
-    .filter((p) => p.status === "active")
-    .map((p) => p.id);
+  const activeUserIds = profiles.filter((p) => p.status === "active").map((p) => p.id);
 
   const duplicatesByUser = new Map<string, Set<string>>();
   const missingByUser = new Map<string, Set<string>>();
-  for (const row of (userStickers as Pick<UserSticker, "user_id" | "sticker_id" | "quantity">[]) ?? []) {
+  for (const row of userStickers) {
     const code = idToCode.get(row.sticker_id);
     if (!code) continue;
     const target = hasDuplicateAvailable(row.quantity) ? duplicatesByUser : isMissing(row.quantity) ? missingByUser : null;
@@ -228,12 +254,13 @@ export interface AdminTradeRow extends TradeRequest {
 export async function getAdminTrades(): Promise<AdminTradeRow[]> {
   const supabase = await createClient();
 
-  const [{ data: trades }, idToCode] = await Promise.all([
-    supabase.from("trade_requests").select("*").order("created_at", { ascending: false }),
+  const [tradeRows, idToCode] = await Promise.all([
+    fetchAllRows<TradeRequest>((from, to) =>
+      supabase.from("trade_requests").select("*").order("created_at", { ascending: false }).range(from, to)
+    ),
     getStickerIdToCodeMap(),
   ]);
 
-  const tradeRows = (trades as TradeRequest[]) ?? [];
   if (tradeRows.length === 0) return [];
 
   const tradeIds = tradeRows.map((t) => t.id);
@@ -325,16 +352,18 @@ function bucketByDay(dates: string[], windowDays: number): DailyCount[] {
 export async function getAdminStatistics(): Promise<AdminStatistics> {
   const supabase = await createClient();
 
-  const [{ data: userStickers }, { data: trades }, { data: profiles }, idToCode] = await Promise.all([
-    supabase.from("user_stickers").select("sticker_id, quantity"),
-    supabase.from("trade_requests").select("from_user_id, to_user_id, created_at"),
-    supabase.from("profiles").select("id, full_name, created_at"),
+  const [stickerRows, tradeRows, profileRows, idToCode] = await Promise.all([
+    fetchAllRows<Pick<UserSticker, "sticker_id" | "quantity">>((from, to) =>
+      supabase.from("user_stickers").select("sticker_id, quantity").range(from, to)
+    ),
+    fetchAllRows<Pick<TradeRequest, "from_user_id" | "to_user_id" | "created_at">>((from, to) =>
+      supabase.from("trade_requests").select("from_user_id, to_user_id, created_at").range(from, to)
+    ),
+    fetchAllRows<Pick<Profile, "id" | "full_name" | "created_at">>((from, to) =>
+      supabase.from("profiles").select("id, full_name, created_at").range(from, to)
+    ),
     getStickerIdToCodeMap(),
   ]);
-
-  const stickerRows = (userStickers as Pick<UserSticker, "sticker_id" | "quantity">[]) ?? [];
-  const tradeRows = (trades as Pick<TradeRequest, "from_user_id" | "to_user_id" | "created_at">[]) ?? [];
-  const profileRows = (profiles as Pick<Profile, "id" | "full_name" | "created_at">[]) ?? [];
 
   function topByCode(predicate: (quantity: number) => boolean) {
     const counts = new Map<string, number>();
@@ -430,18 +459,25 @@ export interface AdminUserCollectionDetail {
 export async function getAdminUserCollectionDetail(userId: string): Promise<AdminUserCollectionDetail> {
   const { supabase } = await requireAdmin();
 
-  const [{ data: teams }, { data: stickers }, { data: userStickers }] = await Promise.all([
-    supabase
-      .from("teams")
-      .select("code, name_he")
-      .order("group_order", { ascending: true })
-      .order("team_order", { ascending: true }),
-    supabase.from("stickers").select("id, team_code, number, code"),
+  // The sticker catalog is currently 960 rows (48 teams x 20) - already
+  // close enough to Supabase's default 1000-row cap that adding a handful
+  // more teams would silently start dropping stickers from a bare
+  // .select(); paginated defensively here for the same reason as every
+  // other platform-wide query in this file (see fetchAllRows.ts).
+  const [teamRows, stickerRows, { data: userStickers }] = await Promise.all([
+    fetchAllRows<{ code: string; name_he: string }>((from, to) =>
+      supabase
+        .from("teams")
+        .select("code, name_he")
+        .order("group_order", { ascending: true })
+        .order("team_order", { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllRows<{ id: string; team_code: string; number: number; code: string }>((from, to) =>
+      supabase.from("stickers").select("id, team_code, number, code").range(from, to)
+    ),
     supabase.from("user_stickers").select("sticker_id, quantity, listing_type, price").eq("user_id", userId),
   ]);
-
-  const teamRows = (teams as { code: string; name_he: string }[]) ?? [];
-  const stickerRows = (stickers as { id: string; team_code: string; number: number; code: string }[]) ?? [];
   const ownedByStickerId = new Map(
     ((userStickers as Pick<UserSticker, "sticker_id" | "quantity" | "listing_type" | "price">[]) ?? []).map((u) => [
       u.sticker_id,
