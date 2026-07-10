@@ -36,12 +36,15 @@ function setupTables(userStickerRows: { user_id: string; sticker_id: string; qua
   tableMocks.set("profiles", {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn((col: string) => {
-      if (col === "status") return Promise.resolve({ data: [OTHER] });
+      // Platform-wide read (paginated via fetchAllRows -> .range()).
+      if (col === "status") return { range: vi.fn().mockResolvedValue({ data: [OTHER] }) };
+      // Single-row lookup for the current user - never paginated.
       return { maybeSingle: vi.fn().mockResolvedValue({ data: MY_PROFILE }) };
     }),
   });
   tableMocks.set("user_stickers", {
-    select: vi.fn().mockResolvedValue({
+    select: vi.fn().mockReturnThis(),
+    range: vi.fn().mockResolvedValue({
       data: userStickerRows.map((r) => ({ listing_type: "trade", price: null, ...r })),
     }),
   });
