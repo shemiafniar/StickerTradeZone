@@ -103,97 +103,104 @@ where id = '11111111-1111-1111-1111-111111111101';
 --    matches exist across several teams.
 -- ---------------------------------------------------------------------
 
+-- Quantity model: 0 = missing, 1 = owned/no duplicate, 2+ = owned with
+-- (quantity - 1) duplicates available - see collectionStatus.ts. Demo data
+-- below uses quantity = 2 wherever the old seed had a plain 'duplicate' row
+-- (i.e. exactly 1 duplicate available), except a couple of rows bumped to
+-- 3 so the "×2 duplicates" UI badge has something to demo too.
+
 -- דנה (תל אביב): has GER 1-15 spare, missing GER 16-20 + FRA 1-10
-insert into public.user_stickers (user_id, sticker_id, status, listing_type)
-select '11111111-1111-1111-1111-111111111102', id, 'duplicate', case when number % 5 = 0 then 'both' else 'trade' end
+insert into public.user_stickers (user_id, sticker_id, quantity, listing_type)
+select '11111111-1111-1111-1111-111111111102', id, case when number = 1 then 3 else 2 end,
+  case when number % 5 = 0 then 'both' else 'trade' end
 from public.stickers where team_code = 'GER' and number between 1 and 15
 on conflict (user_id, sticker_id) do nothing;
 
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111102', id, 'missing'
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111102', id, 0
 from public.stickers where (team_code = 'GER' and number between 16 and 20) or (team_code = 'FRA' and number between 1 and 10)
 on conflict (user_id, sticker_id) do nothing;
 
 -- יוסי (תל אביב): has GER 16-20 + FRA 1-10 spare (perfect match with דנה), missing GER 1-10
-insert into public.user_stickers (user_id, sticker_id, status, listing_type)
-select '11111111-1111-1111-1111-111111111103', id, 'duplicate', case when number % 7 = 0 then 'both' else 'trade' end
+insert into public.user_stickers (user_id, sticker_id, quantity, listing_type)
+select '11111111-1111-1111-1111-111111111103', id, 2, case when number % 7 = 0 then 'both' else 'trade' end
 from public.stickers where (team_code = 'GER' and number between 16 and 20) or (team_code = 'FRA' and number between 1 and 10)
 on conflict (user_id, sticker_id) do nothing;
 
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111103', id, 'missing'
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111103', id, 0
 from public.stickers where team_code = 'GER' and number between 1 and 10
 on conflict (user_id, sticker_id) do nothing;
 
 -- נועה (רמת גן, near תל אביב): has FRA 11-20 spare, missing GER 1-5 and FRA 1-5
-insert into public.user_stickers (user_id, sticker_id, status, listing_type)
-select '11111111-1111-1111-1111-111111111104', id, 'duplicate', 'trade'
+insert into public.user_stickers (user_id, sticker_id, quantity, listing_type)
+select '11111111-1111-1111-1111-111111111104', id, 2, 'trade'
 from public.stickers where team_code = 'FRA' and number between 11 and 20
 on conflict (user_id, sticker_id) do nothing;
 
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111104', id, 'missing'
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111104', id, 0
 from public.stickers where (team_code = 'GER' and number between 1 and 5) or (team_code = 'FRA' and number between 1 and 5)
 on conflict (user_id, sticker_id) do nothing;
 
 -- עמית (חיפה): has POR 1-10 spare, missing POR 11-20
-insert into public.user_stickers (user_id, sticker_id, status, listing_type)
-select '11111111-1111-1111-1111-111111111105', id, 'duplicate', 'both'
+insert into public.user_stickers (user_id, sticker_id, quantity, listing_type)
+select '11111111-1111-1111-1111-111111111105', id, 2, 'both'
 from public.stickers where team_code = 'POR' and number between 1 and 10
 on conflict (user_id, sticker_id) do nothing;
 
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111105', id, 'missing'
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111105', id, 0
 from public.stickers where team_code = 'POR' and number between 11 and 20
 on conflict (user_id, sticker_id) do nothing;
 
 -- תמר (חיפה): has POR 11-20 spare (matches עמית), missing POR 1-5
-insert into public.user_stickers (user_id, sticker_id, status, listing_type)
-select '11111111-1111-1111-1111-111111111106', id, 'duplicate', 'trade'
+insert into public.user_stickers (user_id, sticker_id, quantity, listing_type)
+select '11111111-1111-1111-1111-111111111106', id, 2, 'trade'
 from public.stickers where team_code = 'POR' and number between 11 and 20
 on conflict (user_id, sticker_id) do nothing;
 
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111106', id, 'missing'
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111106', id, 0
 from public.stickers where team_code = 'POR' and number between 1 and 5
 on conflict (user_id, sticker_id) do nothing;
 
 -- אלי (ירושלים): has ISR 1-5 spare, missing ISR 6-12
-insert into public.user_stickers (user_id, sticker_id, status, listing_type)
-select '11111111-1111-1111-1111-111111111107', id, 'duplicate', 'trade'
+insert into public.user_stickers (user_id, sticker_id, quantity, listing_type)
+select '11111111-1111-1111-1111-111111111107', id, 2, 'trade'
 from public.stickers where team_code = 'JPN' and number between 1 and 5
 on conflict (user_id, sticker_id) do nothing;
 
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111107', id, 'missing'
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111107', id, 0
 from public.stickers where team_code = 'JPN' and number between 6 and 12
 on conflict (user_id, sticker_id) do nothing;
 
 -- מאיה (באר שבע): has ISR 6-12 spare, missing ISR 1-5
-insert into public.user_stickers (user_id, sticker_id, status, listing_type)
-select '11111111-1111-1111-1111-111111111108', id, 'duplicate', 'both'
+insert into public.user_stickers (user_id, sticker_id, quantity, listing_type)
+select '11111111-1111-1111-1111-111111111108', id, 2, 'both'
 from public.stickers where team_code = 'JPN' and number between 6 and 12
 on conflict (user_id, sticker_id) do nothing;
 
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111108', id, 'missing'
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111108', id, 0
 from public.stickers where team_code = 'JPN' and number between 1 and 5
 on conflict (user_id, sticker_id) do nothing;
 
 -- רועי (אשדוד) & גלי (פתח תקווה): light data, mostly missing
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111109', id, 'missing'
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111109', id, 0
 from public.stickers where team_code = 'JPN' and number between 1 and 20
 on conflict (user_id, sticker_id) do nothing;
 
-insert into public.user_stickers (user_id, sticker_id, status, listing_type)
-select '11111111-1111-1111-1111-111111111110', id, 'duplicate', 'trade'
+insert into public.user_stickers (user_id, sticker_id, quantity, listing_type)
+select '11111111-1111-1111-1111-111111111110', id, 2, 'trade'
 from public.stickers where team_code = 'JPN' and number between 1 and 8
 on conflict (user_id, sticker_id) do nothing;
 
--- A couple of "have" (owned, not-for-trade) stickers, to demo the green state too.
-insert into public.user_stickers (user_id, sticker_id, status)
-select '11111111-1111-1111-1111-111111111102', id, 'have'
+-- A couple of "owned, no duplicate" stickers (quantity 1), to demo the green state too.
+insert into public.user_stickers (user_id, sticker_id, quantity)
+select '11111111-1111-1111-1111-111111111102', id, 1
 from public.stickers where team_code = 'JPN' and number between 1 and 10
 on conflict (user_id, sticker_id) do nothing;
 
