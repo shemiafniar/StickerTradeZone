@@ -4,6 +4,7 @@ import { useActionState, useState, useTransition } from "react";
 import { scanStickerBacksAction, type ScanActionState } from "@/lib/actions/scanner";
 import { saveScannedStickersAsOwnedAction } from "@/lib/actions/stickers";
 import { normalizeStickerCode } from "@/lib/stickerCodes";
+import { resizeImageForUpload, ImageProcessingError } from "@/lib/image/resizeForUpload";
 import { ImageDropzone } from "@/components/scanner/ImageDropzone";
 import { ConfidenceBadge } from "@/components/scanner/ConfidenceBadge";
 import { Button } from "@/components/ui/Button";
@@ -27,7 +28,26 @@ export function ScannerApp() {
   const [manualCode, setManualCode] = useState("");
   const [saveState, setSaveState] = useState<{ error?: string; success?: string } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [isSaving, startSaving] = useTransition();
+
+  // Every photo is resized/re-encoded to a modest JPEG client-side before
+  // it's ever attached to the upload form - see resizeImageForUpload.ts for
+  // why (body size limits, HEIC support, consistency). The original file
+  // is only used for ImageDropzone's live preview.
+  async function handleFileSelected(original: File) {
+    setUploadError(null);
+    setIsProcessingImage(true);
+    try {
+      const processed = await resizeImageForUpload(original);
+      setFile(processed);
+    } catch (err) {
+      setFile(null);
+      setUploadError(err instanceof ImageProcessingError ? err.message : "לא ניתן היה לעבד את התמונה. נסו קובץ אחר.");
+    } finally {
+      setIsProcessingImage(false);
+    }
+  }
 
   const [scanState, formAction, scanPending] = useActionState(scanStickerBacksAction, scanInitialState);
 
@@ -112,19 +132,22 @@ export function ScannerApp() {
         >
           <ImageDropzone
             onFileSelected={(f) => {
-              setUploadError(null);
-              setFile(f);
+              if (f) handleFileSelected(f);
+              else {
+                setUploadError(null);
+                setFile(null);
+              }
             }}
             onError={(message) => {
               setUploadError(message);
               setFile(null);
             }}
-            disabled={scanPending}
+            disabled={scanPending || isProcessingImage}
           />
           {file && <input type="file" name="image" hidden ref={(el) => setFileOnInput(el, file)} />}
 
-          <Button type="submit" disabled={!file || scanPending} className="mt-4 w-full">
-            {scanPending ? "סורק..." : "🔍 סרוק תמונה"}
+          <Button type="submit" disabled={!file || scanPending || isProcessingImage} className="mt-4 w-full">
+            {isProcessingImage ? "מעבד תמונה..." : scanPending ? "סורק..." : "🔍 סרוק תמונה"}
           </Button>
         </form>
 
@@ -135,9 +158,15 @@ export function ScannerApp() {
           <p className="mt-2 text-xs text-foreground/40">מנוע זיהוי: {scanState.providerName}</p>
         )}
         {scanState.result?.notes && <p className="mt-1 text-xs text-amber-700">{scanState.result.notes}</p>}
+        {scanState.result && scanState.result.detected.length === 0 && (
+          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            לא זוהו מדבקות בתמונה הזו. נסו לצלם מקרוב יותר, בתאורה טובה, כשהגב של כל מדבקה גלוי בבירור - או
+            הוסיפו קודים ידנית למטה.
+          </p>
+        )}
       </Card>
 
-      {rows.length > 0 && (
+      {(rows.length > 0 || (scanState.result && scanState.result.detected.length === 0)) && (
         <Card className="mt-4">
           <h2 className="mb-3 text-lg font-bold">בדיקה ואישור לפני שמירה</h2>
           <ErrorMessage message={saveState?.error} />
