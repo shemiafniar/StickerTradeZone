@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getStickerIdToCodeMap } from "@/lib/data/stickers";
 import { getCityCoordinates } from "@/lib/cities";
 import { deterministicJitter } from "@/lib/distance";
-import { hasDuplicateAvailable, isMissing } from "@/lib/collectionStatus";
+import { hasDuplicateAvailable, isMissing, isOwned } from "@/lib/collectionStatus";
 import { computeMatches, type MatchCandidateInput, type MatchLocationSource, type MatchResult } from "@/lib/matching";
 import type { Profile, UserSticker } from "@/types/database";
 
@@ -10,7 +10,7 @@ export interface MatchesForUser {
   matches: MatchResult[];
   myCity: string;
   locationEnabled: boolean;
-  /** True once the collector has at least one available duplicate or missing mark - false means matching can't produce anything yet, regardless of other collectors. */
+  /** True once the collector owns at least one sticker (quantity >= 1) or has an explicit missing mark - false means the collection is genuinely empty, so matching can't produce anything yet regardless of other collectors. */
   hasCollectionData: boolean;
 }
 
@@ -25,10 +25,10 @@ export async function getMatchesForCurrentUser(): Promise<MatchesForUser> {
   const [profileRes, myProfileRes, userStickersRes, idToCode, locationsRes] = await Promise.all([
     supabase.from("profiles").select("*").eq("status", "active"),
     supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
-    // Only rows that matter for matching: an available duplicate (quantity
-    // >= 2) or an explicit missing mark (quantity = 0) - see
-    // src/lib/collectionStatus.ts for the canonical rule. A plain "owned,
-    // no duplicate" row (quantity = 1) is irrelevant to matching either way.
+    // Every row for every user - the matching algorithm itself only needs
+    // available-duplicate (quantity >= 2) and explicit-missing (quantity =
+    // 0) rows, but hasCollectionData below also needs plain "owned, no
+    // duplicate" (quantity = 1) rows, so nothing is filtered out here.
     supabase.from("user_stickers").select("*"),
     getStickerIdToCodeMap(),
     supabase.rpc("nearby_locations", { max_km: 300 }),
@@ -142,7 +142,13 @@ export async function getMatchesForCurrentUser(): Promise<MatchesForUser> {
   });
 
   const matches = computeMatches(myDuplicateCodes, myMissingCodes, myProfile.city, candidates);
-  const hasCollectionData = myDuplicateCodes.length > 0 || myMissingCodes.length > 0;
+  // Broader than myDuplicateCodes/myMissingCodes above (which only cover
+  // "available duplicate" and "explicit missing" rows, since that's all
+  // the matching algorithm itself needs): a collector who has only marked
+  // stickers as plain owned (quantity = 1, no spare, not missing) still has
+  // a real collection and must not see the "collection is empty" prompt.
+  const hasCollectionData =
+    allUserStickers.some((r) => r.user_id === user.id && isOwned(r.quantity)) || myMissingCodes.length > 0;
 
   return { matches, myCity: myProfile.city, locationEnabled: myProfile.location_enabled, hasCollectionData };
 }

@@ -98,4 +98,13 @@ describe("getMatchesForCurrentUser - quantity-aware duplicate/missing detection"
     const { hasCollectionData } = await getMatchesForCurrentUser();
     expect(hasCollectionData).toBe(true);
   });
+
+  it("reports hasCollectionData = true for a user who has only plain-owned stickers (quantity 1, no duplicates, nothing missing) - regression guard", async () => {
+    setupTables([
+      { user_id: "me", sticker_id: "s-mine", quantity: 1 },
+      { user_id: "me", sticker_id: "s-need", quantity: 1 },
+    ]);
+    const { hasCollectionData } = await getMatchesForCurrentUser();
+    expect(hasCollectionData).toBe(true);
+  });
 });
