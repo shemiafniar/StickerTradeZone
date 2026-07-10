@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import type { Database, Profile, ProfileContact } from "@/types/database";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
@@ -60,7 +61,13 @@ async function ensureProfileExists(supabase: SupabaseClient<Database>, user: Use
   return (data as Profile) ?? null;
 }
 
-export async function getCurrentProfile(): Promise<Profile | null> {
+/**
+ * Wrapped in React's `cache()` so multiple call sites within the same
+ * request (root layout's notification provider, SiteHeader's nav items,
+ * DashboardLayout's auth guard, individual pages, ...) share a single
+ * underlying fetch instead of each re-querying `profiles` independently.
+ */
+export const getCurrentProfile = cache(async (): Promise<Profile | null> => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -71,7 +78,7 @@ export async function getCurrentProfile(): Promise<Profile | null> {
   if (data) return data as Profile;
 
   return ensureProfileExists(supabase, user);
-}
+});
 
 export async function getCurrentContact(): Promise<ProfileContact | null> {
   const supabase = await createClient();

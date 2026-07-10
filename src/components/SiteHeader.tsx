@@ -5,7 +5,6 @@ import { signOutAction } from "@/lib/actions/auth";
 import { MobileNav, type NavItem } from "@/components/MobileNav";
 import { DesktopNav } from "@/components/DesktopNav";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
-import { getNotifications, getUnreadNotificationCount } from "@/lib/data/notifications";
 
 export async function SiteHeader() {
   const profile = await getCurrentProfile();
@@ -15,6 +14,7 @@ export async function SiteHeader() {
     { href: "/dashboard/stickers", label: "האוסף שלי" },
     { href: "/dashboard/matches", label: "התאמות" },
     { href: "/dashboard/trades", label: "טריידים" },
+    { href: "/dashboard/support", label: "תקלות ומשוב", icon: "🛟" },
     { href: "/dashboard/profile", label: "פרופיל" },
   ];
 
@@ -28,10 +28,6 @@ export async function SiteHeader() {
         { href: "/login", label: "התחברות" },
         { href: "/register", label: "הרשמה" },
       ];
-
-  const [notifications, unreadCount] = profile
-    ? await Promise.all([getNotifications(15), getUnreadNotificationCount()])
-    : [[], 0];
 
   return (
     <header className="sticky top-0 z-30 border-b border-black/5 bg-white/90 backdrop-blur">
@@ -67,9 +63,7 @@ export async function SiteHeader() {
             )}
           </div>
 
-          {profile && (
-            <NotificationBell userId={profile.id} initialNotifications={notifications} initialUnreadCount={unreadCount} />
-          )}
+          {profile && <NotificationBell />}
 
           <MobileNav items={items} signOutAction={profile ? signOutAction : undefined} />
         </div>
