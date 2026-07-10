@@ -1,6 +1,14 @@
 import { createClient } from "@/lib/supabase/server";
 import { getStickerIdToCodeMap } from "@/lib/data/stickers";
-import { hasDuplicateAvailable, isMissing, isOwned, summarizeQuantities } from "@/lib/collectionStatus";
+import {
+  availableDuplicates,
+  getStickerCellState,
+  hasDuplicateAvailable,
+  isMissing,
+  isOwned,
+  summarizeQuantities,
+  type StickerCellState,
+} from "@/lib/collectionStatus";
 import { requireAdmin } from "@/lib/adminAuth";
 import type { Profile, TradeRequest, TradeRequestItem, UserSticker } from "@/types/database";
 
@@ -374,14 +382,16 @@ export async function getAdminStatistics(): Promise<AdminStatistics> {
 // admin/layout.tsx server-side redirect.
 // ============================================================================
 
-export type StickerRowState = "missing" | "owned" | "owned_with_duplicates";
+/** Re-exported so existing importers (e.g. AdminUserCollectionPanel.tsx) don't need to know this now comes from collectionStatus.ts. */
+export type StickerRowState = StickerCellState;
 
 export interface AdminStickerRow {
   code: string;
   teamCode: string;
   teamNameHe: string;
   number: number;
-  quantity: number;
+  /** null = unmarked (no user_stickers row at all) - see collectionStatus.ts. Never counted as "missing". */
+  quantity: number | null;
   availableDuplicates: number;
   state: StickerRowState;
   listingType: string | null;
@@ -440,31 +450,46 @@ export async function getAdminUserCollectionDetail(userId: string): Promise<Admi
   );
   const teamNameByCode = new Map(teamRows.map((t) => [t.code, t.name_he]));
 
+  // IMPORTANT: `quantity` stays `null` for a sticker with no user_stickers
+  // row at all ("unmarked" - not yet looked at), distinct from an explicit
+  // quantity = 0 row ("missing" - the collector actively marked it as
+  // needed). Folding "unmarked" into "missing" here would inflate this
+  // page's missing count to include the collector's entire *unmarked*
+  // catalog, which is exactly the sync bug this fixes: getCollectionCounts()/
+  // getAdminUsers() only ever look at rows that actually exist, so this
+  // detail page must do the same for its headline numbers to agree with
+  // them. getStickerCellState()/availableDuplicates() are the same
+  // collectionStatus.ts helpers used everywhere else - no separate logic.
   const allStickerRows: AdminStickerRow[] = stickerRows
     .map((s) => {
       const owned = ownedByStickerId.get(s.id);
-      const quantity = owned?.quantity ?? 0;
-      const available = Math.max(0, quantity - 1);
-      const state: StickerRowState = quantity >= 2 ? "owned_with_duplicates" : quantity === 1 ? "owned" : "missing";
+      const quantity = owned?.quantity ?? null;
       return {
         code: s.code,
         teamCode: s.team_code,
         teamNameHe: teamNameByCode.get(s.team_code) ?? s.team_code,
         number: s.number,
         quantity,
-        availableDuplicates: available,
-        state,
+        availableDuplicates: quantity === null ? 0 : availableDuplicates(quantity),
+        state: getStickerCellState(quantity),
         listingType: owned?.listing_type ?? null,
         price: owned?.price ?? null,
       };
     })
     .sort((a, b) => a.code.localeCompare(b.code));
 
-  const overall = summarizeQuantities(allStickerRows.map((s) => s.quantity));
+  // Only rows that actually exist (quantity !== null) feed the aggregate
+  // counts - identical in spirit to getCollectionCounts()'s
+  // `.from("user_stickers")...` query, which by construction never sees an
+  // unmarked sticker either (there's no row for it to return).
+  const existingQuantities = (quantities: (number | null)[]) =>
+    quantities.filter((q): q is number => q !== null);
+
+  const overall = summarizeQuantities(existingQuantities(allStickerRows.map((s) => s.quantity)));
 
   const teamBreakdowns: AdminTeamBreakdown[] = teamRows.map((team) => {
     const teamStickers = allStickerRows.filter((s) => s.teamCode === team.code);
-    const counts = summarizeQuantities(teamStickers.map((s) => s.quantity));
+    const counts = summarizeQuantities(existingQuantities(teamStickers.map((s) => s.quantity)));
     const total = teamStickers.length;
     return {
       code: team.code,
