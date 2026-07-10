@@ -59,10 +59,16 @@ export function StickerGrid({ teamCode, initialCells }: { teamCode: string; init
     setSaveState(null);
   }
 
-  /** Tapping the cell body cycles: unmarked -> owned (1) -> missing (0) -> unmarked. */
+  /**
+   * Tapping the cell body: unmarked -> owned (1) -> missing (0) -> unmarked.
+   * From a quantity above 1, it steps down by one (not straight to missing)
+   * so an imprecise tap that lands on the cell instead of the tiny +/-
+   * stepper below only nudges the count, rather than wiping out every
+   * duplicate at once.
+   */
   function cycle(index: number) {
     const current = cells[index].quantity;
-    const next = current === null ? 1 : current === 0 ? null : 0;
+    const next = current === null ? 1 : current === 0 ? null : current - 1;
     updateCell(index, next);
   }
 
@@ -155,12 +161,12 @@ export function StickerGrid({ teamCode, initialCells }: { teamCode: string; init
               )}
 
               {cell.quantity !== null && cell.quantity >= 1 && (
-                <div className="absolute -bottom-1.5 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-black/10 bg-white shadow-sm">
+                <div className="absolute -bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-black/10 bg-white shadow-sm">
                   <button
                     type="button"
                     onClick={(e) => decrementQuantity(i, e)}
                     aria-label={`${cell.code}: הפחתת כמות`}
-                    className="flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold text-foreground/60 hover:bg-black/5"
+                    className="flex h-7 w-7 touch-manipulation items-center justify-center rounded-full text-sm font-bold text-foreground/60 hover:bg-black/5"
                   >
                     −
                   </button>
@@ -168,7 +174,7 @@ export function StickerGrid({ teamCode, initialCells }: { teamCode: string; init
                     type="button"
                     onClick={(e) => incrementQuantity(i, e)}
                     aria-label={`${cell.code}: הוספת כמות`}
-                    className="flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold text-brand-dark hover:bg-brand/10"
+                    className="flex h-7 w-7 touch-manipulation items-center justify-center rounded-full text-sm font-bold text-brand-dark hover:bg-brand/10"
                   >
                     +
                   </button>
