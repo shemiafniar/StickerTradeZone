@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getAdminUserById } from "@/lib/data/admin";
+import { getAdminUserById, getAdminUserCollectionDetail } from "@/lib/data/admin";
 import { getRevealedContact } from "@/lib/data/profile";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { SuspendUserButton } from "@/components/admin/SuspendUserButton";
 import { EditUserForm } from "@/components/admin/EditUserForm";
 import { DeleteUserButton } from "@/components/admin/DeleteUserButton";
+import { AdminUserCollectionPanel } from "@/components/admin/AdminUserCollectionPanel";
 
 export const metadata = { title: "פרופיל משתמש" };
 
@@ -15,7 +16,7 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
   const user = await getAdminUserById(id);
   if (!user) notFound();
 
-  const contact = await getRevealedContact(id);
+  const [contact, collectionDetail] = await Promise.all([getRevealedContact(id), getAdminUserCollectionDetail(id)]);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -45,8 +46,9 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
         <h2 className="mb-3 text-lg font-bold">סטטיסטיקות</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="גודל אוסף" value={user.collectionSize} />
-          <Stat label="כפולות" value={user.duplicatesCount} />
+          <Stat label="עם כפולות" value={user.duplicatesCount} />
           <Stat label="חסרות" value={user.missingCount} />
+          <Stat label="עותקי כפולות" value={user.duplicateCopies} />
           <Stat label="בקשות טרייד" value={user.tradeRequestsCount} />
           <Stat label="התאמות פעילות" value={user.matchesCount} />
           <Stat label="מיקום מופעל" value={user.location_enabled ? "כן" : "לא"} />
@@ -59,6 +61,11 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
         <p className="text-sm text-foreground/70">
           טלפון: <span dir="ltr" className="font-bold">{contact?.phone ?? "לא הוזן"}</span>
         </p>
+      </Card>
+
+      <Card className="mb-4">
+        <h2 className="mb-3 text-lg font-bold">אוסף המדבקות (למנהלים בלבד) 🔒</h2>
+        <AdminUserCollectionPanel detail={collectionDetail} />
       </Card>
 
       <Card className="mb-4">

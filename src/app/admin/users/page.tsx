@@ -36,6 +36,7 @@ export default async function AdminUsersPage({
               <th className="pb-2 pl-2">עיר</th>
               <th className="pb-2 pl-2">נרשם/ה</th>
               <th className="pb-2 pl-2">אוסף</th>
+              <th className="pb-2 pl-2">כפולות</th>
               <th className="pb-2 pl-2">טריידים</th>
               <th className="pb-2 pl-2">התאמות</th>
               <th className="pb-2 pl-2">מיקום</th>
@@ -64,6 +65,7 @@ export default async function AdminUsersPage({
                   {new Date(user.created_at).toLocaleDateString("he-IL")}
                 </td>
                 <td className="py-2.5 pl-2 text-foreground/70">{user.collectionSize}</td>
+                <td className="py-2.5 pl-2 text-foreground/70">{user.duplicateCopies}</td>
                 <td className="py-2.5 pl-2 text-foreground/70">{user.tradeRequestsCount}</td>
                 <td className="py-2.5 pl-2 text-foreground/70">{user.matchesCount}</td>
                 <td className="py-2.5 pl-2">{user.location_enabled ? "✅" : "—"}</td>
