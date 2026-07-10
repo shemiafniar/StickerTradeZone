@@ -36,12 +36,24 @@ bootstrap passes.
 ### Collection management (visual album)
 
 - **Visual, tap-to-mark album grid** - "My Collection" shows every participating national team as a
-  card (flag, Hebrew name, 3-letter code); tapping one opens a 20-sticker grid. Tapping a sticker
-  instantly cycles gray (unmarked) → green (have) → blue (duplicate/tradeable) → red (missing) →
-  gray, with no modal dialogs, plus "Mark all as owned" / "Clear all" quick actions and an explicit
-  "Save" to persist a batch of changes at once.
+  card (flag, Hebrew name, 3-letter code), in **official World Cup group order** (Group A through
+  Group L, not alphabetically); tapping one opens a 20-sticker grid. Tapping a sticker instantly
+  cycles gray (unmarked) → green (owned) → red (missing) → gray, with no modal dialogs; a small
+  `+`/`−` stepper on an owned sticker tracks **how many spare copies** you actually have (not just
+  "yes/no duplicate"), shown as a `×N` badge and turning the cell blue once at least one spare is
+  available. "Mark all as owned" / "Clear all" quick actions and an explicit "שמירה" persist a batch
+  of changes at once - a successful save briefly confirms, then returns you to the team list, so the
+  next team is always one tap away; a failed save keeps you on the page with the error visible.
 - Every sticker has a unique, human-readable identifier: `TEAMCODE-number` (e.g. `GER-2`, `FRA-17`,
   `POR-5`) - see [Visual collection model](#visual-collection-model-teams--sticker-codes) below.
+- **Quantity-based duplicate tracking** - owning 3 copies of a sticker means 1 owned + 2 available
+  duplicates, not just a boolean "yes I have a spare". The same rule is used everywhere (collection
+  pages, matching, trade validation, admin statistics) via one shared helper - see
+  [Quantity-based duplicates & World Cup group ordering](#quantity-based-duplicates--world-cup-group-ordering-0017_quantity_and_groupssql)
+  below.
+- **Guided onboarding** - a short, skippable first-time walkthrough plus a live dashboard progress
+  checklist help new collectors discover the fill-collection → check-matches → start-a-trade loop -
+  see [Onboarding & product-journey guidance](#onboarding--product-journey-guidance) below.
 - **AI Sticker Scanner** - photograph the **backs** of several stickers at once (each back prints a
   team code + number in a corner, e.g. "GER 2") and the scanner detects and marks them all as owned
   after a quick review/confirmation screen. Ships with a fully working mock provider (no external
@@ -171,10 +183,10 @@ src/
   app/                     Next.js App Router pages (landing, auth, dashboard, admin)
     auth/callback/route.ts  PKCE code-exchange endpoint (email confirmation, OAuth, magic links)
     auth/confirm/route.ts   token_hash fallback endpoint (older-style email templates)
-    dashboard/stickers/page.tsx             Team cards list ("My Collection")
-    dashboard/stickers/[teamCode]/page.tsx  20-sticker tap-to-mark grid for one team
-    dashboard/stickers/marketplace/page.tsx Marketplace details editor for duplicate (blue) stickers
-    admin/users/[id]/page.tsx               Per-user view/edit/suspend/delete
+    dashboard/stickers/page.tsx             Team cards list ("My Collection"), grouped A-L
+    dashboard/stickers/[teamCode]/page.tsx  20-sticker tap-to-mark grid for one team (quantity model)
+    dashboard/stickers/marketplace/page.tsx Marketplace details editor for stickers with a spare
+    admin/users/[id]/page.tsx               Per-user view/edit/suspend/delete + full collection detail
     admin/trades/page.tsx                   All trades in the system + cancel/force-complete/delete
     admin/statistics/page.tsx               Live-computed platform statistics
     admin/reports/page.tsx                  All bug reports, search/filter by status/category
@@ -182,10 +194,13 @@ src/
     dashboard/support/page.tsx              Bug report / support ticket form ("תקלות ומשוב")
   components/
     ui/                    Shared primitives (Button, Card, Field, Skeleton, CityAutocomplete, ...)
-    collection/            TeamCard, StickerGrid (tap-to-cycle grid), ColorLegend, DuplicateListingChip
+    collection/            TeamCard, StickerGrid (tap-to-cycle grid + quantity stepper), ColorLegend,
+                            DuplicateListingChip
+    dashboard/              OnboardingModal (first-time 3-step walkthrough), OnboardingChecklist
+                            (live progress card on the dashboard)
     auth/ trades/ profile/  Feature UI
     admin/                  AdminTabs, EditUserForm, DeleteUserButton, AdminTradeActions, StatCharts,
-                            UpdateReportStatusForm
+                            UpdateReportStatusForm, AdminUserCollectionPanel (per-collector detail)
     matches/                MatchCard, MatchesView (map/list toggle), MatchesMap (Leaflet, client-only)
     location/              Location opt-in/opt-out toggle
     notifications/         NotificationsContext (shared bell + history state), NotificationBell,
@@ -194,11 +209,17 @@ src/
     support/                SupportReportForm (bug report / support ticket form)
     share/                  Share button + share card
   lib/
-    actions/               Server Actions (auth, profile, stickers, trades, chat,
-                            notifications, location, scanner, admin, support)
+    actions/               Server Actions (auth, profile, stickers, trades, chat, notifications,
+                            location, scanner, admin, support, onboarding)
     data/                  Server-side data fetchers (Supabase queries) - teams.ts, collection.ts
-                            (team progress + grid + marketplace listings), matches.ts, stickers.ts,
-                            admin.ts (users/trades/stats, all admin-only pages), support.ts (bug reports)
+                            (team progress + grid + marketplace listings, quantity-based), matches.ts,
+                            stickers.ts, admin.ts (users/trades/stats + per-collector detail, all
+                            admin-only), support.ts (bug reports)
+    collectionStatus.ts    Canonical owned/missing/duplicate rules from a raw `quantity` value -
+                            the single source of truth used by collection, matching, trades, and
+                            admin stats (never re-derive this logic ad hoc at a call site)
+    adminAuth.ts           requireAdmin() - shared admin-only guard for Server Actions and any
+                            admin-only data reader exposing sensitive per-user detail
     email/                 resend.ts (dependency-free Resend client), notifyAdminsOfReport.ts
     image/                 resizeForUpload.ts - client-side photo resize/HEIC-to-JPEG conversion
                             for the AI Scanner (see "Sticker Scanner reliability" below)
@@ -244,6 +265,13 @@ supabase/
                                         constraint (see "Sticker Scanner reliability" below)
   migrations/0016_support_reports.sql  support_reports table + RLS, private support-attachments
                                         storage bucket + RLS, get_admin_notification_emails() RPC
+  migrations/0017_quantity_and_groups.sql  teams.group_name/group_order/team_order (official World
+                                        Cup group ordering); user_stickers.status -> quantity
+                                        (multi-copy duplicate tracking, data-preserving);
+                                        complete_trade_request() RPC (atomic, quantity-safe trade
+                                        completion); profiles.onboarding_completed_at/
+                                        matches_first_viewed_at/first_trade_started_at (onboarding
+                                        checklist tracking) - see below
   diagnostics/check_auth_trigger.sql Read-only script to debug "Database error saving new user"
   seed.sql                           Local-dev-only seed data (demo users + collections + trades + chat)
 ```
@@ -346,6 +374,104 @@ emoji to real SVG flags (see `flag_icon` above). Same data-preservation philosop
    byte-for-byte intact afterward) and a removed team (confirmed those specific rows are gone), and a
    second full re-run against the now-migrated database to confirm idempotency (zero rows
    inserted/deleted/updated beyond the no-op upserts on the second pass).
+
+### Quantity-based duplicates & World Cup group ordering (`0017_quantity_and_groups.sql`)
+
+Two independent, co-released schema/product changes:
+
+**1) Teams sort by official World Cup group (A-L), not alphabetically.** `teams` gained
+`group_name` (`'A'`-`'L'`, null for a custom admin-added team), `group_order` (`1`-`12` matching
+the letter, `99` for a custom team so it always sorts last), and `team_order` (official position
+1-4 within the group, falling back to `0`). All 48 official codes were mapped to their real
+December-2025-draw group (`MEX`/`RSA`/`KOR`/`CZE` = Group A, ... `ENG`/`CRO`/`GHA`/`PAN` = Group L)
+- see the migration's `values (...)` table for the full mapping. Every team-listing query
+(`getTeams()` in `src/lib/data/teams.ts`, and the admin collection detail breakdown) now orders by
+`group_order, team_order` (falling back to the old `sort_order`, kept but unused for ordering) -
+there's a single place this is done, so it can't drift per page. `admin_add_team()` is unchanged;
+a custom team simply gets the column defaults (`group_order = 99`), so it sorts after every real
+group without needing a code change.
+
+**2) `user_stickers.status` (enum: `have`/`duplicate`/`missing`) is replaced by
+`user_stickers.quantity` (integer >= 0)** - the actual number of copies a collector owns, which the
+enum could never represent (a second, third, fourth spare of the same sticker was indistinguishable
+from a first one under `status = 'duplicate'`). The exact rule, implemented **once** in
+`src/lib/collectionStatus.ts` and used everywhere (collection pages, matching, trades, admin
+stats - never re-derived ad hoc at a call site):
+
+| Row state | Meaning | UI color |
+|---|---|---|
+| no row at all | unmarked - not yet decided | gray |
+| `quantity = 0` | explicitly missing ("I need this") | red |
+| `quantity = 1` | owned, no spare | green |
+| `quantity = N >= 2` | owned, with `N - 1` spares available to trade/sell | blue, shows `×(N-1)` |
+
+The sticker grid's tap-to-cycle interaction is unchanged in spirit (`none -> owned -> missing ->
+none`), and a small `+`/`-` stepper appears on an owned cell to adjust the spare count directly,
+with the available-duplicate count shown as a small badge - see `StickerGrid.tsx`.
+
+**Data migration** (idempotent, re-run-safe): for every existing `user_stickers` row, `status`
+mapped onto `quantity` as `missing -> 0` (row kept, not deleted - preserves the "explicitly
+missing" vs. "unmarked" distinction that already existed), `have -> 1`, `duplicate -> 2`
+(guarantees at least 1 available duplicate post-migration, satisfying "a sticker already marked
+duplicate must remain a duplicate"). **No rows are ever deleted or lost** - verified locally against
+a database with a realistic status distribution (82 missing / 10 have / 80 duplicate = 172 rows):
+after migrating, the row count was still exactly 172, now distributed as 82 at quantity 0, 10 at
+quantity 1, 80 at quantity 2. The `status` column and its check constraint are then dropped. Also
+verified idempotent: re-running the migration a second time (after it already ran once) is a no-op
+(every statement uses `if not exists`/`if exists` guards) and does not touch existing quantities.
+
+**Trades are now quantity-safe end-to-end**, not just at the schema level (the `quantity` column on
+`trade_request_items` existed since `0001_schema.sql` but was never read or enforced by any
+application code before this change):
+
+- **At creation** (`createTradeRequestAction`): every sticker code in the "give" field is checked
+  against the sender's *own* current `availableDuplicates` (`quantity - 1`) - offering a sticker
+  you own only one copy of (or don't own at all) is rejected with a specific Hebrew error naming the
+  code(s), before the trade request is even inserted. The "receive" side (what's being asked of the
+  other person) is intentionally **not** validated at this stage - it's a proposal, and the
+  recipient can always decline if they don't actually have what's requested.
+- **At completion** (`complete_trade_request(p_trade_id)`, a new `SECURITY DEFINER` Postgres
+  function replacing the old bare `update trade_requests set status = 'completed'`): in one
+  transaction, re-verifies the caller is a participant and the trade is `accepted`, then for every
+  `trade_request_item` locks (`for update`) the giving side's `user_stickers` row, verifies they
+  still have enough available duplicates (`quantity >= item.quantity + 1`, i.e. they always keep
+  their own base copy), and atomically moves that many copies to the receiving side (upserting a row
+  if the receiver had none yet). If **any** item fails its check, the whole function raises and
+  Postgres rolls back everything - the trade is not marked completed and no quantities change (no
+  partial trades). The final `update trade_requests set status = 'completed'` inside the same
+  function still fires the existing `validate_trade_status_transition` trigger, so authorization is
+  checked by both the new function *and* the pre-existing trigger. Verified locally by hand: a
+  completion with sufficient duplicates on both sides correctly decremented both givers and
+  incremented both receivers by exactly the traded quantity; a completion where one side had been
+  reduced to their last copy (quantity 1) was rejected with `insufficient available duplicates for
+  sticker ...`, and the trade remained `accepted` (not completed) with quantities completely
+  unchanged - confirming the rollback is atomic, not partial.
+- **Not implemented (documented limitation, not a gap in this change)**: there's no reservation/
+  escrow of a duplicate between creation and completion, so two *different* pending trades could
+  both reference the same duplicate copy - whichever completes first succeeds, the second correctly
+  fails at completion time with the same "insufficient available duplicates" error rather than
+  double-spending it. Adding reservation is a reasonable follow-up if this becomes a real product
+  issue, but wasn't part of the current requirement ("prevent negative quantities and race
+  conditions" - satisfied; "reserve a duplicate the moment it's offered" - out of scope here).
+
+**Admin/collector statistics can no longer drift apart** (previously separate ad hoc counting logic
+in `data/collection.ts` and `data/admin.ts` could disagree): both now call the same
+`summarizeQuantities()` from `collectionStatus.ts` on raw `quantity` rows, using these fixed
+definitions everywhere: *owned* = unique codes with quantity >= 1, *missing* = unique codes with an
+explicit quantity = 0 row, *duplicate* = unique codes with quantity >= 2, *total duplicate copies* =
+sum of `quantity - 1` across duplicate codes. `getAdminStats()`/`getAdminUsers()`/
+`getAdminStatistics()` were all updated to this rule; a test in `src/lib/data/admin.test.ts` feeds
+the same raw rows into both `summarizeQuantities()` directly and `getAdminStats()` and asserts the
+numbers match exactly.
+
+**Admin per-collector collection detail** (`getAdminUserCollectionDetail()` in `data/admin.ts`,
+rendered by `AdminUserCollectionPanel.tsx` on `/admin/users/[id]`): a full, read-only,
+admin-authorization-gated (via the shared `requireAdmin()` in `src/lib/adminAuth.ts` - both the
+page-level `app/admin/layout.tsx` redirect *and* this function itself re-check admin status, since
+this exposes a collector's complete sticker-by-sticker detail) breakdown - overall completion %,
+owned/missing/duplicate unique counts and total duplicate copies, a per-team completion grid you can
+click to filter by, and a searchable/sortable/filterable table of every sticker code with its exact
+quantity, available-duplicate count, and status. Never exposed via any user-facing route.
 
 ### Why a `profiles` / `profile_contacts` split?
 
@@ -733,6 +859,53 @@ change to how distance is computed (e.g. a fancier geo index) only touches `near
   location enabled, `"list"` otherwise (per the product requirement) - this is a one-time default,
   not re-evaluated on every render, so switching tabs manually always sticks for the rest of the visit.
 
+### Onboarding & product-journey guidance
+
+New collectors weren't discovering the core loop (fill the collection -> check Matches -> start a
+trade) on their own, so there are now three layers of guidance, all driven by live data rather than
+one-off flags a user could get stuck in:
+
+1. **First-time onboarding modal** (`OnboardingModal.tsx`) - a short, skippable 3-slide walkthrough
+   ("עדכנו את האוסף שלכם" / "עברו לעמוד ההתאמות" / "שלחו הצעת טרייד"), shown on the dashboard once
+   per account. Both finishing it and clicking "דלג" (skip) call `completeOnboardingAction()`, which
+   sets `profiles.onboarding_completed_at` (idempotent - the `.is("onboarding_completed_at", null)`
+   guard means calling it twice is a no-op) - the modal is gated on this column being `null` and is
+   **never shown again automatically** once it's set, on any device, satisfying "do not repeatedly
+   reopen the onboarding modal."
+2. **Dashboard progress checklist** (`OnboardingChecklist.tsx`, rendered from `app/dashboard/page.tsx`)
+   - six items (complete profile, add location, start the collection, reach a ~20-sticker completion
+   threshold, open Matches, send a first trade request), each computed live from the same profile/
+   collection/trade data the rest of the dashboard already uses - no separate "did they do X" state
+   to keep in sync. The whole card **disappears once every item is done** (never shown to a returning
+   power user again) and can also be dismissed for the current visit via its "✕" - dismissal is
+   session-only by design: if the underlying steps are genuinely still incomplete, it's a *reminder*
+   that should reasonably reappear on the next visit, not a one-time interstitial.
+3. **Contextual empty states**: the Matches page (`app/dashboard/matches/page.tsx`) now distinguishes
+   *why* there are no matches - an entirely empty collection gets a distinct "fill your collection
+   first" prompt (via `getMatchesForCurrentUser()`'s new `hasCollectionData` flag) rather than the
+   generic "no matches yet, check back later" message shown when the collection *has* data but no
+   compatible collector exists yet.
+
+`profiles.matches_first_viewed_at` / `first_trade_started_at` are set (once, best-effort, never
+blocking the actual page/action if the write fails) the first time `getMatchesForCurrentUser()` runs
+for that user and the first time `createTradeRequestAction()` succeeds for them, respectively - this
+both backs the checklist items above and doubles as the `matches_first_view`/`first_trade_started`
+signals from the product-analytics requirement.
+
+**Product analytics events (`onboarding_started`, `onboarding_completed`, `collection_first_save`,
+`collection_progress_threshold_reached`, `matches_first_view`, `first_trade_started`) are
+intentionally not wired up to a third-party analytics SDK in this change** - there is no existing
+analytics infrastructure anywhere in this codebase (verified: no PostHog/Segment/Mixpanel/GA/
+Amplitude import, env var, or `track()` call exists anywhere in `src/`), and introducing a new
+third-party service wasn't part of this requirement (which explicitly says to keep this out of
+scope and document it as a follow-up if no infra exists). What *is* in place, and is the natural
+foundation for that follow-up: the three new timestamp columns above already capture
+`matches_first_view`/`first_trade_started` (and by extension `onboarding_started`/
+`onboarding_completed`) as real, queryable, per-user timestamps - a future first-party `analytics_
+events` table (or a real provider) could be layered on top of these same trigger points
+(`OnboardingModal`'s finish/skip handlers, `getMatchesForCurrentUser()`, `createTradeRequestAction()`)
+without any of today's UI or data-layer code changing.
+
 ### Admin dashboard
 
 `/admin` (and everything under it) is gated **server-side**, not just hidden from the nav:
@@ -1043,8 +1216,9 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 14. `supabase/migrations/0014_admin_dashboard.sql`
 15. `supabase/migrations/0015_scanner_reliability.sql`
 16. `supabase/migrations/0016_support_reports.sql`
+17. `supabase/migrations/0017_quantity_and_groups.sql`
 
-All 16 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 17 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
 inserts/updates are required, including for your first admin account (see step 4) or the sticker
@@ -1175,7 +1349,7 @@ system automatically generates that team's 20 stickers (`CODE-1` through `CODE-2
 
 ## Deploying to Vercel + Supabase
 
-1. **Supabase**: create a project, run all 16 migrations from `supabase/migrations/` in order (SQL
+1. **Supabase**: create a project, run all 17 migrations from `supabase/migrations/` in order (SQL
    Editor or `supabase db push`) to get the initial schema in place. Do **not** run `seed.sql`
    against it (it has a built-in guard that refuses to run if it detects any non-demo account already
    exists, but the safest rule is simply: don't run it against a hosted project at all).
@@ -1213,7 +1387,7 @@ visits or manual profile/role edits, for this release or any future one.
 ### Production checklist (verified during the production-bootstrap pass)
 
 - ✅ `npm run build` (TypeScript strict), `npm run lint`, and `npm test` all pass clean.
-- ✅ All 16 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
+- ✅ All 17 migrations + `seed.sql` re-applied from a completely empty Postgres database (multiple
   times, including a full clean-room run for this pass) with zero errors.
 - ✅ Simulated the exact "profile row missing for an authenticated user" edge case against a real
   Postgres and confirmed the app's self-heal path (the same upsert `getCurrentProfile()` performs)
@@ -1312,7 +1486,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Core user journey**
 
-- [ ] On a brand new Supabase project (only the 16 migrations run, no seed, no manual SQL), register
+- [ ] On a brand new Supabase project (only the 17 migrations run, no seed, no manual SQL), register
       the very first account and confirm it lands in the admin panel (`role = 'admin'`) automatically
 - [ ] If "Confirm email" is enabled in your Supabase project: register a second account, click the
       confirmation link in the email, and confirm it redirects straight into the dashboard already
@@ -1433,6 +1607,44 @@ third-party share sheets) can't be fully exercised in CI:
 - [ ] Confirm "תקלות ומשוב" appears in both the desktop and mobile nav while signed in, with its icon,
       and does **not** appear anywhere in the logged-out landing-page nav
 
+**Quantity-based duplicates, group ordering, trades, admin detail, and onboarding**
+
+- [ ] On "האוסף שלי", confirm the 48 team cards appear in official World Cup group order (Group A's
+      four teams first - Mexico/South Africa/Korea/Czechia - then Group B, ... through Group L), not
+      alphabetically by Hebrew or English name
+- [ ] Open a team, tap an unmarked (gray) sticker once -> green (owned). Tap the small "+" under it
+      twice -> now shows a blue "×2" badge (2 available duplicates). Tap "−" once -> back to "×1".
+      Keep tapping the cell body itself (not +/-) -> cycles to red (missing) -> back to gray
+- [ ] Save the team grid successfully - confirm a brief success message appears, then you're
+      automatically returned to "האוסף שלי" (not left on the team page); make an unsaved change,
+      close the tab, and confirm the browser's "leave site?" warning still appears (unsaved-change
+      protection is unaffected by the redirect change)
+- [ ] Force a save to fail (e.g. temporarily revoke the RLS policy or disconnect network) and confirm
+      you stay on the team page with a Hebrew error, and are **not** redirected
+- [ ] Mark a sticker with quantity 2 as a duplicate, note its code, then as a second test account try
+      to create a trade requesting **3** copies of that same sticker from the first account's
+      duplicates - confirm the *first* account is blocked from *offering* more than it has available
+      when *it* creates a request (try creating a request from the first account offering 2 copies
+      of a sticker it only owns 1 of - expect a clear Hebrew error naming the sticker)
+- [ ] Create and accept a trade where each side offers a sticker they have 2+ copies of, then click
+      "סמן/י כהושלם" (complete) - confirm both sides' collections update automatically afterward (the
+      giver's quantity decreases by the traded amount, the receiver's increases) - check via "האוסף
+      שלי" without refreshing anything server-side manually
+- [ ] As an admin, open a user's detail page and confirm the new "אוסף המדבקות" section shows a
+      correct completion %, per-team breakdown, and a searchable/sortable/filterable full sticker
+      table; confirm the numbers here match what that same user sees on their own "האוסף שלי" page
+- [ ] Confirm a non-admin account gets redirected away from `/admin/users/[id]` (same as every other
+      `/admin/*` route) rather than seeing any collection detail
+- [ ] Register a brand-new account: confirm the 3-step onboarding modal appears once on first
+      dashboard visit, can be skipped or completed, and **does not reappear** on a page refresh or a
+      later login
+- [ ] On the dashboard, confirm the progress checklist shows live, correct status for each of its 6
+      items as you complete them (profile, location, collection started, ~20-sticker threshold,
+      opened Matches, sent a trade) - and confirm the whole card disappears once every item is done
+- [ ] With an entirely empty collection, open "מצא טריידים קרובים" and confirm the empty state clearly
+      explains the collection is empty and links to "האוסף שלי" (a distinct message from the regular
+      "no matches yet" state you'd see with real collection data but no compatible collector)
+
 **Security spot-checks** (safe to do with two browser profiles / incognito windows)
 
 - [ ] Confirm you cannot see another user's exact location anywhere in the UI or network tab -
@@ -1450,7 +1662,7 @@ third-party share sheets) can't be fully exercised in CI:
 
 **Production readiness**
 
-- [ ] Fresh Supabase project: run all 16 migrations in order, confirm no errors, do **not** run
+- [ ] Fresh Supabase project: run all 17 migrations in order, confirm no errors, do **not** run
       `seed.sql`, and confirm you never need to open the SQL editor again for basic usage (including
       getting your first admin)
 - [ ] `select count(*) from public.teams;` returns exactly 48, and "האוסף שלי" shows 48 team cards,
@@ -1523,6 +1735,26 @@ third-party share sheets) can't be fully exercised in CI:
 - **Admin statistics have no caching either** - same reasoning, same fix if it's ever needed.
 - **User impersonation ("login as user") isn't implemented**, per the brief - only the architecture
   for it (a same-guarded action in `actions/admin.ts`) is in place.
+- **Trade duplicates aren't reserved between creation and completion** (see "Quantity-based
+  duplicates & World Cup group ordering" above) - two different pending trades could both reference
+  the same spare copy; whichever completes first succeeds, the second fails cleanly at completion
+  time with a clear error rather than double-spending, but there's no proactive "this copy is already
+  promised elsewhere" warning at creation time. A reservation/escrow model is a reasonable follow-up
+  if this becomes a real product issue.
+- **Product analytics events are not wired to any third-party service** (`onboarding_started`,
+  `onboarding_completed`, `collection_first_save`, `collection_progress_threshold_reached`,
+  `matches_first_view`, `first_trade_started`) - there's no existing analytics infrastructure
+  anywhere in this codebase, so none was introduced for this. The three new `profiles` timestamp
+  columns (`onboarding_completed_at`, `matches_first_viewed_at`, `first_trade_started_at`) already
+  capture the equivalent signals as real per-user data, ready to be layered under a future
+  first-party events table or a real provider without any UI changes - see "Onboarding &
+  product-journey guidance" above.
+- **The dashboard checklist's "meaningful collection" threshold (20 stickers) and the onboarding
+  checklist's dismiss behavior (session-only, not persisted) are both simple, reasonable defaults,
+  not user-configurable settings** - if product data later suggests a different threshold, or that
+  dismissal should persist across visits, both are single small, well-isolated changes
+  (`COLLECTION_PROGRESS_THRESHOLD` in `app/dashboard/page.tsx`; `OnboardingChecklist.tsx`'s local
+  `dismissed` state).
 - **Region-based fallback ranking (`getLocationRank()`) still only has a hand-curated list for a few
   dozen well-known cities** (`CITY_REGIONS` in `cities.ts`); everything else falls back to real
   coordinate proximity (≤15km) instead, which is a reasonable default but not identical to genuine
