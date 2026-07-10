@@ -3,7 +3,6 @@ export type TradeItemDirection = "give" | "receive";
 export type UserRole = "user" | "admin";
 export type UserStatus = "active" | "suspended";
 export type ListingType = "trade" | "sale" | "both";
-export type StickerStatus = "have" | "duplicate" | "missing";
 export type NotificationType =
   | "trade_request_received"
   | "trade_accepted"
@@ -19,6 +18,12 @@ export type Profile = {
   role: UserRole;
   status: UserStatus;
   location_enabled: boolean;
+  /** Set once the first-time onboarding modal is completed or dismissed - never shown again after this is set. */
+  onboarding_completed_at: string | null;
+  /** Set the first time this user loads /dashboard/matches. */
+  matches_first_viewed_at: string | null;
+  /** Set the first time this user successfully creates a trade request. */
+  first_trade_started_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -51,6 +56,12 @@ export type Team = {
    */
   flag_icon: string | null;
   sort_order: number;
+  /** World Cup group letter (A-L), null for a custom team added beyond the official 48. */
+  group_name: string | null;
+  /** Numeric group rank for stable ordering: A=1, B=2, ... L=12. Custom teams default to 99 (sort last). */
+  group_order: number;
+  /** Official position within the team's group (1-4); 0 for teams without one. */
+  team_order: number;
   created_at: string;
 };
 
@@ -74,13 +85,19 @@ export type AppSettings = {
 
 /**
  * One row per (user, sticker) the user has marked. No row = unmarked/gray.
- * `listing_type`/`price`/`note` are only meaningful when status = 'duplicate'.
+ * `quantity`: 0 = missing (explicit "I need this" mark), 1 = owned/no
+ * duplicate, 2+ = owned with (quantity - 1) duplicates available. See
+ * src/lib/collectionStatus.ts for the canonical derivation helpers used
+ * everywhere (collection pages, matching, trades, admin stats) - never
+ * reimplement this logic ad hoc at a call site.
+ * `listing_type`/`price`/`note` are only meaningful once quantity >= 2
+ * (i.e. at least one duplicate is available to list).
  */
 export type UserSticker = {
   id: string;
   user_id: string;
   sticker_id: string;
-  status: StickerStatus;
+  quantity: number;
   listing_type: ListingType;
   price: number | null;
   note: string | null;
@@ -208,7 +225,7 @@ export type Database = {
       };
       user_stickers: {
         Row: UserSticker;
-        Insert: Partial<UserSticker> & { user_id: string; sticker_id: string; status: StickerStatus };
+        Insert: Partial<UserSticker> & { user_id: string; sticker_id: string; quantity: number };
         Update: Partial<UserSticker>;
         Relationships: [];
       };
@@ -305,6 +322,10 @@ export type Database = {
       };
       mark_all_notifications_read: {
         Args: Record<string, never>;
+        Returns: undefined;
+      };
+      complete_trade_request: {
+        Args: { p_trade_id: string };
         Returns: undefined;
       };
     };

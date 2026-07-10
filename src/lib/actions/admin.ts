@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
+import { requireAdmin } from "@/lib/adminAuth";
 import { ISRAEL_CITIES } from "@/lib/cities";
 import type { Database, Profile, UserRole } from "@/types/database";
 
@@ -11,19 +11,6 @@ export interface AdminActionState {
   error?: string;
   success?: boolean;
   message?: string;
-}
-
-async function requireAdmin() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("UNAUTHENTICATED");
-
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-  if ((profile as Profile | null)?.role !== "admin") throw new Error("FORBIDDEN");
-
-  return { supabase, adminId: user.id };
 }
 
 async function logAdminAction(

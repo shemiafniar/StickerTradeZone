@@ -1,12 +1,18 @@
 import { createClient } from "@/lib/supabase/server";
 import { getTeams, getTeamByCode, getStickersForTeam } from "@/lib/data/teams";
 import { getStickerCatalog, getStickerIdToCodeMap } from "@/lib/data/stickers";
-import type { ListingType, StickerStatus, Team, UserSticker } from "@/types/database";
+import { availableDuplicates, summarizeQuantities, type CollectionCounts } from "@/lib/collectionStatus";
+import type { ListingType, Team, UserSticker } from "@/types/database";
 
 export interface TeamProgress extends Team {
-  have: number;
-  duplicate: number;
+  /** Unique stickers with quantity >= 1. */
+  owned: number;
+  /** Unique stickers with an explicit quantity = 0 row. */
   missing: number;
+  /** Unique stickers with at least one available duplicate (quantity >= 2). */
+  duplicates: number;
+  /** Total available duplicate copies within this team. */
+  duplicateCopies: number;
   total: number;
 }
 
@@ -16,37 +22,44 @@ export async function getTeamsWithProgress(userId: string): Promise<TeamProgress
   const [teams, stickers, userStickersRes] = await Promise.all([
     getTeams(),
     getStickerCatalog(),
-    supabase.from("user_stickers").select("sticker_id, status").eq("user_id", userId),
+    supabase.from("user_stickers").select("sticker_id, quantity").eq("user_id", userId),
   ]);
 
   const teamCodeBySticker = new Map(stickers.map((s) => [s.id, s.team_code]));
 
-  const countsByTeam = new Map<string, { have: number; duplicate: number; missing: number }>();
-  for (const row of (userStickersRes.data as Pick<UserSticker, "sticker_id" | "status">[]) ?? []) {
+  const quantitiesByTeam = new Map<string, number[]>();
+  for (const row of (userStickersRes.data as Pick<UserSticker, "sticker_id" | "quantity">[]) ?? []) {
     const teamCode = teamCodeBySticker.get(row.sticker_id);
     if (!teamCode) continue;
-    if (!countsByTeam.has(teamCode)) countsByTeam.set(teamCode, { have: 0, duplicate: 0, missing: 0 });
-    countsByTeam.get(teamCode)![row.status] += 1;
+    if (!quantitiesByTeam.has(teamCode)) quantitiesByTeam.set(teamCode, []);
+    quantitiesByTeam.get(teamCode)!.push(row.quantity);
   }
 
-  return teams.map((team) => ({
-    ...team,
-    ...(countsByTeam.get(team.code) ?? { have: 0, duplicate: 0, missing: 0 }),
-    total: 20,
-  }));
+  return teams.map((team) => {
+    const counts = summarizeQuantities(quantitiesByTeam.get(team.code) ?? []);
+    return {
+      ...team,
+      owned: counts.ownedUnique,
+      missing: counts.missingUnique,
+      duplicates: counts.duplicateUnique,
+      duplicateCopies: counts.totalDuplicateCopies,
+      total: 20,
+    };
+  });
 }
 
 export interface StickerCell {
   id: string;
   code: string;
   number: number;
-  status: "none" | StickerStatus;
+  /** null = unmarked (no row, gray). 0 = missing (red). 1 = owned (green). 2+ = owned with (quantity-1) duplicates (blue, shows count). */
+  quantity: number | null;
   listing_type: ListingType;
   price: number | null;
   note: string | null;
 }
 
-/** The 20-sticker grid for a single team, with the current user's status per sticker. */
+/** The 20-sticker grid for a single team, with the current user's quantity per sticker. */
 export async function getTeamGrid(
   userId: string,
   teamCode: string
@@ -72,7 +85,7 @@ export async function getTeamGrid(
       id: s.id,
       code: s.code,
       number: s.number,
-      status: owned?.status ?? "none",
+      quantity: owned?.quantity ?? null,
       listing_type: owned?.listing_type ?? "trade",
       price: owned?.price ?? null,
       note: owned?.note ?? null,
@@ -82,34 +95,31 @@ export async function getTeamGrid(
   return { team, cells };
 }
 
-export async function getCollectionCounts(
-  userId: string
-): Promise<{ have: number; duplicates: number; missing: number }> {
+/** Canonical whole-collection counts for the current user - the same rules getAdminUsers()/getAdminStats() use for every other collector. */
+export async function getCollectionCounts(userId: string): Promise<CollectionCounts> {
   const supabase = await createClient();
-  const { data } = await supabase.from("user_stickers").select("status").eq("user_id", userId);
-  const rows = (data as Pick<UserSticker, "status">[]) ?? [];
-
-  return {
-    have: rows.filter((r) => r.status === "have").length,
-    duplicates: rows.filter((r) => r.status === "duplicate").length,
-    missing: rows.filter((r) => r.status === "missing").length,
-  };
+  const { data } = await supabase.from("user_stickers").select("quantity").eq("user_id", userId);
+  const rows = (data as Pick<UserSticker, "quantity">[]) ?? [];
+  return summarizeQuantities(rows.map((r) => r.quantity));
 }
 
 export interface DuplicateListing {
   id: string;
   stickerId: string;
   code: string;
+  quantity: number;
+  /** availableDuplicates(quantity) - how many spare copies can be listed/traded. */
+  availableDuplicates: number;
   listing_type: ListingType;
   price: number | null;
   note: string | null;
 }
 
-/** All of the current user's tradeable duplicates, for the marketplace-details editor. */
+/** All of the current user's stickers with at least one available duplicate, for the marketplace-details editor. */
 export async function getUserDuplicateListings(userId: string): Promise<DuplicateListing[]> {
   const supabase = await createClient();
   const [{ data }, idToCode] = await Promise.all([
-    supabase.from("user_stickers").select("*").eq("user_id", userId).eq("status", "duplicate"),
+    supabase.from("user_stickers").select("*").eq("user_id", userId).gte("quantity", 2),
     getStickerIdToCodeMap(),
   ]);
 
@@ -118,6 +128,8 @@ export async function getUserDuplicateListings(userId: string): Promise<Duplicat
       id: d.id,
       stickerId: d.sticker_id,
       code: idToCode.get(d.sticker_id) ?? "",
+      quantity: d.quantity,
+      availableDuplicates: availableDuplicates(d.quantity),
       listing_type: d.listing_type,
       price: d.price,
       note: d.note,

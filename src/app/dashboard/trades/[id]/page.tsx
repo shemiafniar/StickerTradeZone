@@ -59,13 +59,15 @@ export default async function TradeDetailPage({ params }: { params: Promise<{ id
           <div className="rounded-xl bg-green-50 p-3">
             <p className="text-xs font-bold text-green-700">תקבל/י</p>
             <p className="mt-1 text-sm font-bold text-green-800" dir="ltr">
-              {trade.itemsToReceive.map((i) => i.stickerCode).join(", ") || "-"}
+              {trade.itemsToReceive.map((i) => i.stickerCode + (i.quantity > 1 ? ` ×${i.quantity}` : "")).join(", ") ||
+                "-"}
             </p>
           </div>
           <div className="rounded-xl bg-blue-50 p-3">
             <p className="text-xs font-bold text-blue-700">תיתן/י</p>
             <p className="mt-1 text-sm font-bold text-blue-800" dir="ltr">
-              {trade.itemsToGive.map((i) => i.stickerCode).join(", ") || "-"}
+              {trade.itemsToGive.map((i) => i.stickerCode + (i.quantity > 1 ? ` ×${i.quantity}` : "")).join(", ") ||
+                "-"}
             </p>
           </div>
         </div>

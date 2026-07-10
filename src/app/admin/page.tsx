@@ -17,6 +17,7 @@ export default async function AdminOverviewPage() {
     { label: "טריידים פתוחים", value: stats.pendingTradeRequests, icon: "⏳" },
     { label: "טריידים שהושלמו", value: stats.completedTradeRequests, icon: "🏆" },
     { label: "סה\"כ התאמות פעילות", value: stats.totalMatches, icon: "🔗" },
+    { label: "עותקי כפולות במערכת", value: stats.totalDuplicateCopies, icon: "🔁" },
     { label: "דיווחי תקלות פתוחים", value: reportCounts.open + reportCounts.inProgress, icon: "🛟" },
   ];
 

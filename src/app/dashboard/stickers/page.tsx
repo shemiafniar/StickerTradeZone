@@ -13,10 +13,10 @@ export default async function StickersPage() {
 
   const [teams, settings] = await Promise.all([getTeamsWithProgress(profile.id), getAppSettings()]);
 
-  const totalOwned = teams.reduce((sum, t) => sum + t.have + t.duplicate, 0);
+  const totalOwned = teams.reduce((sum, t) => sum + t.owned, 0);
   const totalStickers = teams.reduce((sum, t) => sum + t.total, 0);
   const totalMissing = teams.reduce((sum, t) => sum + t.missing, 0);
-  const totalDuplicates = teams.reduce((sum, t) => sum + t.duplicate, 0);
+  const totalDuplicateCopies = teams.reduce((sum, t) => sum + t.duplicateCopies, 0);
 
   return (
     <div>
@@ -32,7 +32,7 @@ export default async function StickersPage() {
             href="/dashboard/stickers/marketplace"
             className="rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-bold text-foreground/70 transition hover:bg-black/5"
           >
-            🔁 הכפולים שלי ({totalDuplicates})
+            🔁 הכפולים שלי ({totalDuplicateCopies})
           </Link>
           <Link
             href="/dashboard/scanner"

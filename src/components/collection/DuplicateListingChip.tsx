@@ -73,6 +73,12 @@ export function DuplicateListingChip({ item }: { item: DuplicateListing }) {
   return (
     <div className="flex items-center gap-1.5 rounded-xl border border-black/10 bg-white py-1.5 pr-1.5 pl-3 text-sm font-bold shadow-sm">
       <span className="rounded-lg bg-brand/10 px-2 py-1 text-brand-dark">{item.code}</span>
+      <span
+        className="rounded-lg bg-accent/20 px-2 py-0.5 text-xs font-bold text-orange-700"
+        title="כפולות זמינות להחלפה/מכירה"
+      >
+        ×{item.availableDuplicates}
+      </span>
       <span className={`rounded-lg px-2 py-0.5 text-xs font-bold ${listing.className}`}>{listing.label}</span>
       {item.price != null && <span className="text-xs font-bold text-orange-700">{item.price}₪</span>}
       <button

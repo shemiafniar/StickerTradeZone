@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getStickerIdToCodeMap } from "@/lib/data/stickers";
+import { hasDuplicateAvailable, isMissing, isOwned, summarizeQuantities } from "@/lib/collectionStatus";
+import { requireAdmin } from "@/lib/adminAuth";
 import type { Profile, TradeRequest, TradeRequestItem, UserSticker } from "@/types/database";
 
 // ============================================================================
@@ -8,10 +10,14 @@ import type { Profile, TradeRequest, TradeRequestItem, UserSticker } from "@/typ
 
 export interface AdminUserRow extends Profile {
   email: string | null;
+  /** Unique stickers with at least one available duplicate (quantity >= 2) - same rule as the user-facing collection/matching. */
   duplicatesCount: number;
+  /** Unique stickers with an explicit quantity = 0 row. */
   missingCount: number;
-  /** Stickers actually owned (have + duplicate) - "collection size". */
+  /** Unique stickers owned (quantity >= 1) - "collection size". */
   collectionSize: number;
+  /** Total available duplicate copies (sum of quantity - 1 across duplicate stickers). */
+  duplicateCopies: number;
   tradeRequestsCount: number;
   /** How many other collectors this user has an active (mutual, non-zero) match with. */
   matchesCount: number;
@@ -23,25 +29,21 @@ export async function getAdminUsers(searchTerm?: string): Promise<AdminUserRow[]
 
   const [{ data: profiles }, { data: userStickers }, { data: trades }, { data: emailRows }] = await Promise.all([
     supabase.from("profiles").select("*").order("created_at", { ascending: false }),
-    supabase.from("user_stickers").select("user_id, status"),
+    supabase.from("user_stickers").select("user_id, quantity"),
     supabase.from("trade_requests").select("from_user_id, to_user_id"),
     supabase.rpc("admin_get_user_emails"),
   ]);
 
   const emailByUserId = new Map(((emailRows as { id: string; email: string | null }[]) ?? []).map((r) => [r.id, r.email]));
 
-  const dupCounts = new Map<string, number>();
-  const missingCounts = new Map<string, number>();
-  const ownedCounts = new Map<string, number>();
-  for (const row of (userStickers as Pick<UserSticker, "user_id" | "status">[]) ?? []) {
-    if (row.status === "duplicate") {
-      dupCounts.set(row.user_id, (dupCounts.get(row.user_id) ?? 0) + 1);
-      ownedCounts.set(row.user_id, (ownedCounts.get(row.user_id) ?? 0) + 1);
-    } else if (row.status === "missing") {
-      missingCounts.set(row.user_id, (missingCounts.get(row.user_id) ?? 0) + 1);
-    } else if (row.status === "have") {
-      ownedCounts.set(row.user_id, (ownedCounts.get(row.user_id) ?? 0) + 1);
-    }
+  // Same canonical rules as the user-facing collection page and matching -
+  // see src/lib/collectionStatus.ts's doc comment for why this must never
+  // be reimplemented ad hoc (that drift is exactly what caused admin
+  // statistics to disagree with what collectors actually see).
+  const quantitiesByUser = new Map<string, number[]>();
+  for (const row of (userStickers as Pick<UserSticker, "user_id" | "quantity">[]) ?? []) {
+    if (!quantitiesByUser.has(row.user_id)) quantitiesByUser.set(row.user_id, []);
+    quantitiesByUser.get(row.user_id)!.push(row.quantity);
   }
 
   const tradeCounts = new Map<string, number>();
@@ -52,15 +54,19 @@ export async function getAdminUsers(searchTerm?: string): Promise<AdminUserRow[]
 
   const matchCountByUser = await getMatchCountsByUser();
 
-  let rows = ((profiles as Profile[]) ?? []).map((p) => ({
-    ...p,
-    email: emailByUserId.get(p.id) ?? null,
-    duplicatesCount: dupCounts.get(p.id) ?? 0,
-    missingCount: missingCounts.get(p.id) ?? 0,
-    collectionSize: ownedCounts.get(p.id) ?? 0,
-    tradeRequestsCount: tradeCounts.get(p.id) ?? 0,
-    matchesCount: matchCountByUser.get(p.id) ?? 0,
-  }));
+  let rows = ((profiles as Profile[]) ?? []).map((p) => {
+    const counts = summarizeQuantities(quantitiesByUser.get(p.id) ?? []);
+    return {
+      ...p,
+      email: emailByUserId.get(p.id) ?? null,
+      duplicatesCount: counts.duplicateUnique,
+      missingCount: counts.missingUnique,
+      collectionSize: counts.ownedUnique,
+      duplicateCopies: counts.totalDuplicateCopies,
+      tradeRequestsCount: tradeCounts.get(p.id) ?? 0,
+      matchesCount: matchCountByUser.get(p.id) ?? 0,
+    };
+  });
 
   const term = searchTerm?.trim().toLowerCase();
   if (term) {
@@ -89,8 +95,12 @@ export interface AdminStats {
   activeUsers: number;
   suspendedUsers: number;
   usersWithLocation: number;
+  /** Unique (user, sticker) pairs with an available duplicate, platform-wide. */
   totalDuplicates: number;
+  /** Unique (user, sticker) pairs explicitly marked missing, platform-wide. */
   totalMissing: number;
+  /** Sum of available duplicate copies across every collector - see collectionStatus.ts. */
+  totalDuplicateCopies: number;
   totalTradeRequests: number;
   pendingTradeRequests: number;
   completedTradeRequests: number;
@@ -102,26 +112,28 @@ export async function getAdminStats(): Promise<AdminStats> {
 
   const [profiles, userStickers, trades, matchCounts] = await Promise.all([
     supabase.from("profiles").select("status, location_enabled"),
-    supabase.from("user_stickers").select("status"),
+    supabase.from("user_stickers").select("quantity"),
     supabase.from("trade_requests").select("status"),
     getMatchCountsByUser(),
   ]);
 
   const profileRows = (profiles.data as { status: string; location_enabled: boolean }[]) ?? [];
-  const stickerRows = (userStickers.data as Pick<UserSticker, "status">[]) ?? [];
+  const stickerRows = (userStickers.data as Pick<UserSticker, "quantity">[]) ?? [];
   const tradeRows = (trades.data as { status: string }[]) ?? [];
 
   // Every mutual match is counted once per participant by getMatchCountsByUser(),
   // so summing and halving gives the number of distinct matching pairs.
   const totalMatches = Array.from(matchCounts.values()).reduce((sum, n) => sum + n, 0) / 2;
+  const collectionCounts = summarizeQuantities(stickerRows.map((s) => s.quantity));
 
   return {
     totalUsers: profileRows.length,
     activeUsers: profileRows.filter((p) => p.status === "active").length,
     suspendedUsers: profileRows.filter((p) => p.status === "suspended").length,
     usersWithLocation: profileRows.filter((p) => p.location_enabled).length,
-    totalDuplicates: stickerRows.filter((s) => s.status === "duplicate").length,
-    totalMissing: stickerRows.filter((s) => s.status === "missing").length,
+    totalDuplicates: collectionCounts.duplicateUnique,
+    totalMissing: collectionCounts.missingUnique,
+    totalDuplicateCopies: collectionCounts.totalDuplicateCopies,
     totalTradeRequests: tradeRows.length,
     pendingTradeRequests: tradeRows.filter((t) => t.status === "pending").length,
     completedTradeRequests: tradeRows.filter((t) => t.status === "completed").length,
@@ -141,7 +153,7 @@ async function getMatchCountsByUser(): Promise<Map<string, number>> {
   const supabase = await createClient();
   const [{ data: profiles }, { data: userStickers }, idToCode] = await Promise.all([
     supabase.from("profiles").select("id, status"),
-    supabase.from("user_stickers").select("user_id, sticker_id, status"),
+    supabase.from("user_stickers").select("user_id, sticker_id, quantity"),
     getStickerIdToCodeMap(),
   ]);
 
@@ -151,10 +163,10 @@ async function getMatchCountsByUser(): Promise<Map<string, number>> {
 
   const duplicatesByUser = new Map<string, Set<string>>();
   const missingByUser = new Map<string, Set<string>>();
-  for (const row of (userStickers as Pick<UserSticker, "user_id" | "sticker_id" | "status">[]) ?? []) {
+  for (const row of (userStickers as Pick<UserSticker, "user_id" | "sticker_id" | "quantity">[]) ?? []) {
     const code = idToCode.get(row.sticker_id);
     if (!code) continue;
-    const target = row.status === "duplicate" ? duplicatesByUser : row.status === "missing" ? missingByUser : null;
+    const target = hasDuplicateAvailable(row.quantity) ? duplicatesByUser : isMissing(row.quantity) ? missingByUser : null;
     if (!target) continue;
     if (!target.has(row.user_id)) target.set(row.user_id, new Set());
     target.get(row.user_id)!.add(code);
@@ -306,20 +318,20 @@ export async function getAdminStatistics(): Promise<AdminStatistics> {
   const supabase = await createClient();
 
   const [{ data: userStickers }, { data: trades }, { data: profiles }, idToCode] = await Promise.all([
-    supabase.from("user_stickers").select("sticker_id, status"),
+    supabase.from("user_stickers").select("sticker_id, quantity"),
     supabase.from("trade_requests").select("from_user_id, to_user_id, created_at"),
     supabase.from("profiles").select("id, full_name, created_at"),
     getStickerIdToCodeMap(),
   ]);
 
-  const stickerRows = (userStickers as Pick<UserSticker, "sticker_id" | "status">[]) ?? [];
+  const stickerRows = (userStickers as Pick<UserSticker, "sticker_id" | "quantity">[]) ?? [];
   const tradeRows = (trades as Pick<TradeRequest, "from_user_id" | "to_user_id" | "created_at">[]) ?? [];
   const profileRows = (profiles as Pick<Profile, "id" | "full_name" | "created_at">[]) ?? [];
 
-  const countByCode = (status: "missing" | "duplicate" | "have") => {
+  function topByCode(predicate: (quantity: number) => boolean) {
     const counts = new Map<string, number>();
     for (const row of stickerRows) {
-      if (row.status !== status) continue;
+      if (!predicate(row.quantity)) continue;
       const code = idToCode.get(row.sticker_id);
       if (!code) continue;
       counts.set(code, (counts.get(code) ?? 0) + 1);
@@ -328,22 +340,13 @@ export async function getAdminStatistics(): Promise<AdminStatistics> {
       .map(([code, count]) => ({ code, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, STATS_TOP_N);
-  };
-
-  const mostWantedStickers = countByCode("missing");
-  // "Most common" = most widely owned (have + duplicate combined), i.e. the
-  // stickers that are easiest to find - not just spares available to trade.
-  const ownedCounts = new Map<string, number>();
-  for (const row of stickerRows) {
-    if (row.status !== "have" && row.status !== "duplicate") continue;
-    const code = idToCode.get(row.sticker_id);
-    if (!code) continue;
-    ownedCounts.set(code, (ownedCounts.get(code) ?? 0) + 1);
   }
-  const mostCommonStickers = Array.from(ownedCounts.entries())
-    .map(([code, count]) => ({ code, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, STATS_TOP_N);
+
+  // "Most wanted" = most explicit missing marks (quantity = 0).
+  const mostWantedStickers = topByCode(isMissing);
+  // "Most common" = most widely owned (quantity >= 1), i.e. the stickers
+  // that are easiest to find - not just spares available to trade.
+  const mostCommonStickers = topByCode(isOwned);
 
   const traderCounts = new Map<string, number>();
   for (const t of tradeRows) {
@@ -360,4 +363,129 @@ export async function getAdminStatistics(): Promise<AdminStatistics> {
   const userGrowth = bucketByDay(profileRows.map((p) => p.created_at), DAILY_WINDOW_DAYS);
 
   return { mostWantedStickers, mostCommonStickers, mostActiveTraders, tradesPerDay, userGrowth };
+}
+
+// ============================================================================
+// Per-user collection detail (admin-only, read-only) - requirement #5:
+// a full breakdown of a single collector's collection, reusing the exact
+// same canonical rules as everywhere else (collectionStatus.ts). This is
+// intentionally NOT exposed via any user-facing route or public API - the
+// only caller is /admin/users/[id]/page.tsx, itself gated by the existing
+// admin/layout.tsx server-side redirect.
+// ============================================================================
+
+export type StickerRowState = "missing" | "owned" | "owned_with_duplicates";
+
+export interface AdminStickerRow {
+  code: string;
+  teamCode: string;
+  teamNameHe: string;
+  number: number;
+  quantity: number;
+  availableDuplicates: number;
+  state: StickerRowState;
+  listingType: string | null;
+  price: number | null;
+}
+
+export interface AdminTeamBreakdown {
+  code: string;
+  nameHe: string;
+  owned: number;
+  missing: number;
+  duplicates: number;
+  duplicateCopies: number;
+  total: number;
+  completionPct: number;
+}
+
+export interface AdminUserCollectionDetail {
+  ownedUnique: number;
+  missingUnique: number;
+  duplicateUnique: number;
+  totalDuplicateCopies: number;
+  totalStickers: number;
+  completionPct: number;
+  teams: AdminTeamBreakdown[];
+  stickers: AdminStickerRow[];
+}
+
+/**
+ * Defense in depth: re-verifies the caller is an admin even though every
+ * caller of this function is already nested under app/admin/layout.tsx's
+ * own server-side redirect - this per-user collection breakdown is
+ * sensitive enough (full sticker-by-sticker detail) that it must never be
+ * reachable if a future route ever forgets that layout guard.
+ */
+export async function getAdminUserCollectionDetail(userId: string): Promise<AdminUserCollectionDetail> {
+  const { supabase } = await requireAdmin();
+
+  const [{ data: teams }, { data: stickers }, { data: userStickers }] = await Promise.all([
+    supabase
+      .from("teams")
+      .select("code, name_he")
+      .order("group_order", { ascending: true })
+      .order("team_order", { ascending: true }),
+    supabase.from("stickers").select("id, team_code, number, code"),
+    supabase.from("user_stickers").select("sticker_id, quantity, listing_type, price").eq("user_id", userId),
+  ]);
+
+  const teamRows = (teams as { code: string; name_he: string }[]) ?? [];
+  const stickerRows = (stickers as { id: string; team_code: string; number: number; code: string }[]) ?? [];
+  const ownedByStickerId = new Map(
+    ((userStickers as Pick<UserSticker, "sticker_id" | "quantity" | "listing_type" | "price">[]) ?? []).map((u) => [
+      u.sticker_id,
+      u,
+    ])
+  );
+  const teamNameByCode = new Map(teamRows.map((t) => [t.code, t.name_he]));
+
+  const allStickerRows: AdminStickerRow[] = stickerRows
+    .map((s) => {
+      const owned = ownedByStickerId.get(s.id);
+      const quantity = owned?.quantity ?? 0;
+      const available = Math.max(0, quantity - 1);
+      const state: StickerRowState = quantity >= 2 ? "owned_with_duplicates" : quantity === 1 ? "owned" : "missing";
+      return {
+        code: s.code,
+        teamCode: s.team_code,
+        teamNameHe: teamNameByCode.get(s.team_code) ?? s.team_code,
+        number: s.number,
+        quantity,
+        availableDuplicates: available,
+        state,
+        listingType: owned?.listing_type ?? null,
+        price: owned?.price ?? null,
+      };
+    })
+    .sort((a, b) => a.code.localeCompare(b.code));
+
+  const overall = summarizeQuantities(allStickerRows.map((s) => s.quantity));
+
+  const teamBreakdowns: AdminTeamBreakdown[] = teamRows.map((team) => {
+    const teamStickers = allStickerRows.filter((s) => s.teamCode === team.code);
+    const counts = summarizeQuantities(teamStickers.map((s) => s.quantity));
+    const total = teamStickers.length;
+    return {
+      code: team.code,
+      nameHe: team.name_he,
+      owned: counts.ownedUnique,
+      missing: counts.missingUnique,
+      duplicates: counts.duplicateUnique,
+      duplicateCopies: counts.totalDuplicateCopies,
+      total,
+      completionPct: total > 0 ? Math.round((counts.ownedUnique / total) * 100) : 0,
+    };
+  });
+
+  return {
+    ownedUnique: overall.ownedUnique,
+    missingUnique: overall.missingUnique,
+    duplicateUnique: overall.duplicateUnique,
+    totalDuplicateCopies: overall.totalDuplicateCopies,
+    totalStickers: allStickerRows.length,
+    completionPct: allStickerRows.length > 0 ? Math.round((overall.ownedUnique / allStickerRows.length) * 100) : 0,
+    teams: teamBreakdowns,
+    stickers: allStickerRows,
+  };
 }
