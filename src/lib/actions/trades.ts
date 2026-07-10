@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getStickerCodeToIdMap } from "@/lib/data/stickers";
 import { parseStickerCodes } from "@/lib/stickerCodes";
 import { formatRetrySeconds } from "@/lib/rateLimit";
-import type { Profile } from "@/types/database";
+import { hasDuplicateAvailable } from "@/lib/collectionStatus";
+import type { Profile, UserSticker } from "@/types/database";
 
 export interface TradeActionState {
   error?: string;
@@ -69,6 +70,37 @@ export async function createTradeRequestAction(
 
   const codeToId = await getStickerCodeToIdMap();
 
+  // A collector can only offer stickers they actually have an available
+  // duplicate of - never their only owned copy (requirement: "a user can
+  // offer only available duplicate copies, not their only owned copy").
+  // Validated here, at proposal time, against *my* current quantities; the
+  // matching completion RPC re-validates atomically at completion time too,
+  // since availability can change in between.
+  if (giveCodes.length > 0) {
+    const giveIds = giveCodes.map((c) => codeToId.get(c)).filter((id): id is string => Boolean(id));
+    const { data: myStickers } = await supabase
+      .from("user_stickers")
+      .select("sticker_id, quantity")
+      .eq("user_id", user.id)
+      .in("sticker_id", giveIds);
+
+    const myQuantityByStickerId = new Map(
+      ((myStickers as Pick<UserSticker, "sticker_id" | "quantity">[]) ?? []).map((s) => [s.sticker_id, s.quantity])
+    );
+
+    const insufficient = giveCodes.filter((code) => {
+      const stickerId = codeToId.get(code);
+      const quantity = stickerId ? myQuantityByStickerId.get(stickerId) ?? 0 : 0;
+      return !hasDuplicateAvailable(quantity);
+    });
+
+    if (insufficient.length > 0) {
+      return {
+        error: `אין לך כפולות זמינות להצעה של: ${insufficient.join(", ")}. ניתן להציע רק מדבקות שיש לכם מהן יותר מעותק אחד.`,
+      };
+    }
+  }
+
   const { data: trade, error: tradeError } = await supabase
     .from("trade_requests")
     .insert({ from_user_id: user.id, to_user_id: toUserId, message: message || null })
@@ -83,16 +115,26 @@ export async function createTradeRequestAction(
     ...giveCodes
       .map((c) => codeToId.get(c))
       .filter((id): id is string => Boolean(id))
-      .map((sticker_id) => ({ trade_request_id: trade.id, sticker_id, direction: "give" as const })),
+      .map((sticker_id) => ({ trade_request_id: trade.id, sticker_id, direction: "give" as const, quantity: 1 })),
     ...receiveCodes
       .map((c) => codeToId.get(c))
       .filter((id): id is string => Boolean(id))
-      .map((sticker_id) => ({ trade_request_id: trade.id, sticker_id, direction: "receive" as const })),
+      .map((sticker_id) => ({ trade_request_id: trade.id, sticker_id, direction: "receive" as const, quantity: 1 })),
   ];
 
   if (items.length > 0) {
     const { error: itemsError } = await supabase.from("trade_request_items").insert(items);
     if (itemsError) return { error: itemsError.message };
+  }
+
+  // Best-effort onboarding-journey signal (backs the dashboard checklist) -
+  // never blocks trade creation if it fails.
+  if (!(myProfile as Profile | null)?.first_trade_started_at) {
+    const { error: markError } = await supabase
+      .from("profiles")
+      .update({ first_trade_started_at: new Date().toISOString() })
+      .eq("id", user.id);
+    if (markError) console.error("[trades] Failed to record first_trade_started_at:", markError.message);
   }
 
   revalidatePath("/dashboard/trades");
@@ -115,6 +157,9 @@ function translateTradeError(message: string): string {
   if (message.includes("invalid trade status transition")) {
     return "לא ניתן לבצע את הפעולה במצב הנוכחי של הבקשה";
   }
+  if (message.includes("insufficient available duplicates")) {
+    return "לא ניתן להשלים את הטרייד - אחד הצדדים כבר לא מחזיק בכמות הכפולות הדרושה. בדקו את האוסף שלכם ונסו שוב.";
+  }
   return message;
 }
 
@@ -130,12 +175,24 @@ async function updateTradeStatus(
   if (!tradeId) return { error: "בקשת טרייד לא תקינה" };
 
   const supabase = await createClient();
-  const { error } = await supabase.from("trade_requests").update({ status }).eq("id", tradeId);
 
-  if (error) return { error: translateTradeError(error.message) };
+  if (status === "completed") {
+    // Atomic, quantity-safe completion: exchanges every trade_request_item's
+    // quantity between the two participants and marks the trade completed
+    // in a single transaction (see complete_trade_request() in
+    // 0017_quantity_and_groups.sql) - a plain status UPDATE never touched
+    // either side's actual collection.
+    const { error } = await supabase.rpc("complete_trade_request", { p_trade_id: tradeId });
+    if (error) return { error: translateTradeError(error.message) };
+  } else {
+    const { error } = await supabase.from("trade_requests").update({ status }).eq("id", tradeId);
+    if (error) return { error: translateTradeError(error.message) };
+  }
 
   revalidatePath("/dashboard/trades");
   revalidatePath(`/dashboard/trades/${tradeId}`);
+  revalidatePath("/dashboard/stickers");
+  revalidatePath("/dashboard");
   return { success: true };
 }
 

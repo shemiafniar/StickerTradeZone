@@ -46,6 +46,7 @@ export function NewTradeForm({
           dir="ltr"
           className="text-right"
         />
+        <p className="mt-1 text-xs text-foreground/50">אפשר להציע רק מדבקות שיש לכם מהן יותר מעותק אחד (כפולות זמינות).</p>
       </FieldGroup>
 
       <FieldGroup>
