@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/Card";
 export const metadata = { title: "התאמות" };
 
 export default async function MatchesPage() {
-  const { matches, myCity, locationEnabled } = await getMatchesForCurrentUser();
+  const { matches, myCity, locationEnabled, hasCollectionData } = await getMatchesForCurrentUser();
 
   return (
     <div>
@@ -32,14 +32,29 @@ export default async function MatchesPage() {
         </Card>
       )}
 
-      {matches.length === 0 ? (
+      {matches.length === 0 && !hasCollectionData ? (
+        <Card className="border-amber-200 bg-amber-50">
+          <p className="text-sm font-bold text-amber-800">📖 האוסף שלכם עדיין ריק</p>
+          <p className="mt-1 text-sm text-amber-900/80">
+            כדי שנוכל למצוא לכם התאמות, סמנו קודם בעמוד{" "}
+            <Link href="/dashboard/stickers" className="font-bold text-amber-900 underline">
+              האוסף שלי
+            </Link>{" "}
+            אילו מדבקות יש לכם (כולל כפולות), ואילו חסרות לכם. ברגע שיהיו לכם כמה מדבקות מסומנות, נתחיל להציג כאן
+            אספנים רלוונטיים.
+          </p>
+        </Card>
+      ) : matches.length === 0 ? (
         <Card>
           <p className="text-sm text-foreground/60">
-            עדיין לא נמצאו התאמות. ודאו שסימנתם מדבקות כפולות וחסרות בעמוד{" "}
+            {locationEnabled
+              ? "עדיין לא נמצאו התאמות קרובות - סימנתם כבר מדבקות באוסף, אבל אף אספן/ת קרוב/ה לא צריך/ה בדיוק את מה שיש לכם (או להפך) כרגע."
+              : "עדיין לא נמצאו התאמות. "}
+            נסו שוב בקרוב - יותר אספנים מצטרפים כל הזמן, ואפשר גם{" "}
             <Link href="/dashboard/stickers" className="font-bold text-brand-dark">
-              המדבקות שלי
-            </Link>
-            , ונסו שוב בקרוב - יותר אספנים מצטרפים כל הזמן!
+              להוסיף עוד מדבקות וכפולות
+            </Link>{" "}
+            כדי להגדיל את הסיכוי להתאמה.
           </p>
         </Card>
       ) : (

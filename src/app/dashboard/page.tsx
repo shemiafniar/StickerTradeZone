@@ -7,9 +7,15 @@ import { Card } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import { TradeStatusBadge } from "@/components/ui/Badge";
 import { ShareCard } from "@/components/share/ShareCard";
+import { OnboardingModal } from "@/components/dashboard/OnboardingModal";
+import { OnboardingChecklist, type ChecklistItem } from "@/components/dashboard/OnboardingChecklist";
 import Link from "next/link";
 
 export const metadata = { title: "לוח בקרה" };
+
+// Roughly one full team's worth of stickers - a "meaningful" amount of
+// collection data for matching to have something real to work with.
+const COLLECTION_PROGRESS_THRESHOLD = 20;
 
 export default async function DashboardPage() {
   const profile = await getCurrentProfile();
@@ -21,6 +27,7 @@ export default async function DashboardPage() {
     getTradeRequestsForCurrentUser(),
     getCurrentContact(),
   ]);
+  const totalDuplicateCopies = counts.totalDuplicateCopies;
 
   const pendingIncoming = trades.filter((t) => t.status === "pending" && !t.isSender);
   const recentTrades = trades.slice(0, 4);
@@ -30,8 +37,28 @@ export default async function DashboardPage() {
   // depend on this data.
   const profileIncomplete = !profile.city || !contact?.phone;
 
+  const checklistItems: ChecklistItem[] = [
+    { key: "profile", label: "השלמת פרופיל (עיר וטלפון)", done: !profileIncomplete, href: "/dashboard/profile" },
+    { key: "location", label: "הפעלת מיקום", done: profile.location_enabled, href: "/dashboard/profile" },
+    { key: "collection_started", label: "התחלת מילוי האוסף", done: counts.ownedUnique > 0, href: "/dashboard/stickers" },
+    {
+      key: "collection_threshold",
+      label: `הגעה ל-${COLLECTION_PROGRESS_THRESHOLD} מדבקות באוסף`,
+      done: counts.ownedUnique >= COLLECTION_PROGRESS_THRESHOLD,
+      href: "/dashboard/stickers",
+    },
+    { key: "matches_viewed", label: "פתיחת עמוד ההתאמות", done: Boolean(profile.matches_first_viewed_at), href: "/dashboard/matches" },
+    {
+      key: "first_trade",
+      label: "שליחת בקשת טרייד ראשונה",
+      done: Boolean(profile.first_trade_started_at) || trades.length > 0,
+      href: "/dashboard/matches",
+    },
+  ];
+
   return (
     <div>
+      {!profile.onboarding_completed_at && <OnboardingModal />}
       <div className="mb-6 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold">שלום, {profile.full_name || "אספן"} 👋</h1>
@@ -42,6 +69,8 @@ export default async function DashboardPage() {
         </div>
         <LinkButton href="/dashboard/matches">מצא טריידים קרובים</LinkButton>
       </div>
+
+      <OnboardingChecklist items={checklistItems} />
 
       {profileIncomplete && (
         <Card className="mb-6 border-amber-200 bg-amber-50">
@@ -60,12 +89,12 @@ export default async function DashboardPage() {
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <SummaryCard icon="📋" label="מדבקות שחסרות לי" value={counts.missing} href="/dashboard/stickers" accent="orange" />
-        <SummaryCard icon="🔁" label="מדבקות כפולות" value={counts.duplicates} href="/dashboard/stickers/marketplace" accent="green" />
+        <SummaryCard icon="📋" label="מדבקות שחסרות לי" value={counts.missingUnique} href="/dashboard/stickers" accent="orange" />
+        <SummaryCard icon="🔁" label="כפולות זמינות" value={totalDuplicateCopies} href="/dashboard/stickers/marketplace" accent="green" />
         <SummaryCard icon="📍" label="התאמות קרובות" value={matches.length} href="/dashboard/matches" accent="blue" />
       </div>
 
-      {counts.missing === 0 && counts.duplicates === 0 && (
+      {counts.ownedUnique === 0 && counts.missingUnique === 0 && (
         <Card className="mt-6 border-brand/20 bg-brand/5">
           <p className="font-bold text-brand-dark">👋 עוד לא סימנת מדבקות - בואו נתחיל!</p>
           <p className="mt-1 text-sm text-foreground/70">
