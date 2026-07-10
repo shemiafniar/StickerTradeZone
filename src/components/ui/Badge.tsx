@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import type { TradeStatus } from "@/types/database";
+import type { SupportReportStatus, TradeStatus } from "@/types/database";
 
 const statusConfig: Record<TradeStatus, { label: string; className: string }> = {
   pending: { label: "ממתין לתשובה", className: "bg-amber-100 text-amber-800" },
@@ -11,6 +11,22 @@ const statusConfig: Record<TradeStatus, { label: string; className: string }> = 
 
 export function TradeStatusBadge({ status }: { status: TradeStatus }) {
   const config = statusConfig[status];
+  return (
+    <span className={cn("inline-block rounded-full px-3 py-1 text-xs font-bold", config.className)}>
+      {config.label}
+    </span>
+  );
+}
+
+const reportStatusConfig: Record<SupportReportStatus, { label: string; className: string }> = {
+  open: { label: "פתוח", className: "bg-amber-100 text-amber-800" },
+  in_progress: { label: "בטיפול", className: "bg-brand-blue/10 text-brand-blue" },
+  resolved: { label: "טופל", className: "bg-green-100 text-green-800" },
+  closed: { label: "סגור", className: "bg-gray-100 text-gray-600" },
+};
+
+export function SupportReportStatusBadge({ status }: { status: SupportReportStatus }) {
+  const config = reportStatusConfig[status];
   return (
     <span className={cn("inline-block rounded-full px-3 py-1 text-xs font-bold", config.className)}>
       {config.label}

@@ -147,6 +147,32 @@ export type AdminLog = {
   created_at: string;
 };
 
+export type SupportReportCategory =
+  | "technical"
+  | "trade"
+  | "matches"
+  | "scanner"
+  | "notifications"
+  | "suggestion"
+  | "other";
+export type SupportReportStatus = "open" | "in_progress" | "resolved" | "closed";
+
+export type SupportReport = {
+  id: string;
+  user_id: string;
+  subject: string;
+  category: SupportReportCategory;
+  description: string;
+  /** Storage object path in the private `support-attachments` bucket, not a public URL - see the migration. */
+  attachment_url: string | null;
+  page_url: string | null;
+  user_agent: string | null;
+  status: SupportReportStatus;
+  admin_note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -232,6 +258,12 @@ export type Database = {
         Update: Partial<ScanEvent>;
         Relationships: [];
       };
+      support_reports: {
+        Row: SupportReport;
+        Insert: Partial<SupportReport> & { user_id: string; subject: string; category: SupportReportCategory; description: string };
+        Update: Partial<SupportReport>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -254,6 +286,10 @@ export type Database = {
       admin_get_user_emails: {
         Args: Record<string, never>;
         Returns: { id: string; email: string | null }[];
+      };
+      get_admin_notification_emails: {
+        Args: Record<string, never>;
+        Returns: { email: string }[];
       };
       disable_my_location: {
         Args: Record<string, never>;

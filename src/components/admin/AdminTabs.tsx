@@ -8,6 +8,7 @@ const tabs = [
   { href: "/admin", label: "סקירה כללית" },
   { href: "/admin/users", label: "משתמשים" },
   { href: "/admin/trades", label: "טריידים" },
+  { href: "/admin/reports", label: "דיווחי תקלות" },
   { href: "/admin/statistics", label: "סטטיסטיקות" },
   { href: "/admin/stickers", label: "קטלוג מדבקות" },
 ];
