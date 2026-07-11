@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { summarizeQuantities } from "@/lib/collectionStatus";
 
 const { mockFrom, mockRpc, mockGetUser, tableMocks, chainableRange } = vi.hoisted(() => {
@@ -117,6 +117,141 @@ describe("getAdminStats uses the canonical collectionStatus rules (no parallel c
     expect(stats.totalDuplicates).toBe(expected.duplicateUnique);
     expect(stats.totalMissing).toBe(expected.missingUnique);
     expect(stats.totalDuplicateCopies).toBe(expected.totalDuplicateCopies);
+  });
+});
+
+/**
+ * Root-cause investigation: a collector's numbers can only ever come out
+ * as 0/empty in getAdminUsers() via a single mechanism - quantitiesByUser
+ * has no entry for that profile's exact `id` (the `?? []` fallback on a
+ * Map miss). This test proves that mechanism precisely, using the exact
+ * reported production numbers for the affected account (12 user_stickers
+ * rows: 1 at quantity 1, 11 at quantity 2 - i.e. 12 owned, 0 missing, 11
+ * duplicates, 11 duplicate copies):
+ *
+ * 1. When a profile's `id` exactly matches its user_stickers.user_id rows
+ *    (the correct, expected case), the admin list reports the exact
+ *    production numbers - so the aggregation logic itself is not the bug.
+ * 2. When a user_stickers row's user_id has NO matching profiles row at
+ *    all (e.g. from a second, separate sign-up whose profile row is what
+ *    actually appears in the list under the same display name, while the
+ *    *other* account is the one that actually built up the collection),
+ *    that collection data is - correctly, safely - excluded from every
+ *    profile's count rather than being wrongly attributed to any of them,
+ *    and getAdminUsers() logs a clear, safe (no PII beyond a UUID),
+ *    server-side-only diagnostic identifying exactly which user_id has no
+ *    home - this is the concrete signal to check in production logs the
+ *    next time this is reported.
+ * 3. Two profiles sharing the same display name (the realistic cause of an
+ *    admin looking at the wrong "Eyal Afinzar" row) are also flagged.
+ */
+describe("getAdminUsers() - tracing exactly how a correct collection count could render as 0 (root cause investigation)", () => {
+  const REAL_USER_ID = "0dc16840-5e15-4a41-9cc7-9fe4d4946f03";
+  // 1 owned/no-spare + 11 owned/1-spare-each = 12 owned, 0 missing, 11
+  // duplicate-unique, 11 total duplicate copies - matches the reported
+  // production numbers for the affected account exactly.
+  const REAL_USER_STICKER_ROWS = [
+    { user_id: REAL_USER_ID, sticker_id: "s0", quantity: 1 },
+    ...Array.from({ length: 11 }, (_, i) => ({ user_id: REAL_USER_ID, sticker_id: `s${i + 1}`, quantity: 2 })),
+  ];
+
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tableMocks.clear();
+    mockRpc.mockClear();
+    mockRpc.mockImplementation(async () => ({ data: [] }));
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it("reports the exact production numbers (12 owned / 0 missing / 11 duplicates / 11 copies) when the profile id matches the user_stickers rows", async () => {
+    tableMocks.set("profiles", {
+      select: vi.fn(() => ({
+        then: (resolve: (v: unknown) => void) => resolve({ data: [{ id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }] }),
+        order: vi.fn().mockResolvedValue({ data: [{ id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }] }),
+      })),
+    });
+    tableMocks.set("user_stickers", { select: vi.fn().mockResolvedValue({ data: REAL_USER_STICKER_ROWS }) });
+    tableMocks.set("trade_requests", { select: vi.fn().mockResolvedValue({ data: [] }) });
+
+    const users = await getAdminUsers();
+    const row = users.find((u) => u.id === REAL_USER_ID);
+
+    expect(row).toBeTruthy();
+    expect(row!.collectionSize).toBe(12);
+    expect(row!.missingCount).toBe(0);
+    expect(row!.duplicatesCount).toBe(11);
+    expect(row!.duplicateCopies).toBe(11);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("excludes an orphaned user_stickers.user_id (no matching profiles row) from every profile's count instead of misattributing it, and logs a safe server-side warning identifying it", async () => {
+    // A *different*, empty profile that happens to render under the same
+    // display name as the real account - the exact scenario that makes a
+    // real collection look like it "disappeared" in /admin/users: an admin
+    // sees "Eyal Afinzar" with 0/0/0/0, while the account that actually
+    // holds the 12-row collection (REAL_USER_ID) has no profiles row at
+    // all to attach to (e.g. deleted, or never the one actually viewed).
+    const EMPTY_LOOKALIKE_ID = "11111111-1111-1111-1111-111111111199";
+    tableMocks.set("profiles", {
+      select: vi.fn(() => ({
+        then: (resolve: (v: unknown) => void) =>
+          resolve({ data: [{ id: EMPTY_LOOKALIKE_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }] }),
+        order: vi.fn().mockResolvedValue({
+          data: [{ id: EMPTY_LOOKALIKE_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }],
+        }),
+      })),
+    });
+    // The 12 real rows exist and are fetched (proving the data itself is
+    // never lost or filtered out at the query level) - they're simply
+    // keyed to a user_id with no corresponding profile in this result set.
+    tableMocks.set("user_stickers", { select: vi.fn().mockResolvedValue({ data: REAL_USER_STICKER_ROWS }) });
+    tableMocks.set("trade_requests", { select: vi.fn().mockResolvedValue({ data: [] }) });
+
+    const users = await getAdminUsers();
+
+    expect(users).toHaveLength(1);
+    expect(users[0].id).toBe(EMPTY_LOOKALIKE_ID);
+    expect(users[0].collectionSize).toBe(0);
+    expect(users[0].missingCount).toBe(0);
+    expect(users[0].duplicatesCount).toBe(0);
+    expect(users[0].duplicateCopies).toBe(0);
+
+    // The concrete, safe diagnostic: identifies the orphaned id directly.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(REAL_USER_ID));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no matching profiles row"));
+  });
+
+  it("flags two profiles sharing the same display name as a possible duplicate account", async () => {
+    const secondId = "22222222-2222-2222-2222-222222222299";
+    tableMocks.set("profiles", {
+      select: vi.fn(() => ({
+        then: (resolve: (v: unknown) => void) =>
+          resolve({
+            data: [
+              { id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" },
+              { id: secondId, full_name: "Eyal Afinzar", city: "חיפה", status: "active" },
+            ],
+          }),
+        order: vi.fn().mockResolvedValue({
+          data: [
+            { id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" },
+            { id: secondId, full_name: "Eyal Afinzar", city: "חיפה", status: "active" },
+          ],
+        }),
+      })),
+    });
+    tableMocks.set("user_stickers", { select: vi.fn().mockResolvedValue({ data: REAL_USER_STICKER_ROWS }) });
+    tableMocks.set("trade_requests", { select: vi.fn().mockResolvedValue({ data: [] }) });
+
+    await getAdminUsers();
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Eyal Afinzar"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("duplicate accounts"));
   });
 });
 

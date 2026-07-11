@@ -69,10 +69,53 @@ export async function getAdminUsers(searchTerm?: string): Promise<AdminUserRow[]
   // see src/lib/collectionStatus.ts's doc comment for why this must never
   // be reimplemented ad hoc (that drift is exactly what caused admin
   // statistics to disagree with what collectors actually see).
+  const profileRows = (profiles as Profile[]) ?? [];
+  const stickerRows = (userStickers as Pick<UserSticker, "user_id" | "quantity">[]) ?? [];
+
   const quantitiesByUser = new Map<string, number[]>();
-  for (const row of userStickers) {
+  for (const row of stickerRows) {
     if (!quantitiesByUser.has(row.user_id)) quantitiesByUser.set(row.user_id, []);
     quantitiesByUser.get(row.user_id)!.push(row.quantity);
+  }
+
+  // Data-integrity diagnostic, server-side only (never sent to the
+  // browser, no emails/phones/etc - just UUIDs and display names that are
+  // already visible in this same admin list): a user_stickers row whose
+  // user_id has no matching profiles row is a real collection that this
+  // list can never attribute to anyone, and would otherwise silently
+  // vanish with no error - exactly the symptom of "a collector's updated
+  // collection still shows as empty/unchanged in /admin/users" if their
+  // sticker rows are keyed to an id that no longer resolves to a profile
+  // (e.g. two separate signups - one that was actually used to build the
+  // collection, one that's what an admin happens to be looking at under
+  // the same display name). Kept permanently (not a one-off throwaway) as
+  // a cheap, safe ongoing health check - see the regression test in
+  // admin.test.ts for the exact scenario this catches.
+  const profileIds = new Set(profileRows.map((p) => p.id));
+  const orphanedUserIds = Array.from(quantitiesByUser.keys()).filter((uid) => !profileIds.has(uid));
+  if (orphanedUserIds.length > 0) {
+    console.warn(
+      `[getAdminUsers] ${orphanedUserIds.length} user_stickers.user_id value(s) have no matching profiles row - ` +
+        `that collection data cannot be attributed to anyone in this list: ${orphanedUserIds.slice(0, 20).join(", ")}` +
+        (orphanedUserIds.length > 20 ? ", ..." : "")
+    );
+  }
+  const nameGroups = new Map<string, { display: string; count: number }>();
+  for (const p of profileRows) {
+    const trimmed = p.full_name.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    const existing = nameGroups.get(key);
+    if (existing) existing.count += 1;
+    else nameGroups.set(key, { display: trimmed, count: 1 });
+  }
+  const duplicateNames = Array.from(nameGroups.values()).filter((g) => g.count > 1);
+  if (duplicateNames.length > 0) {
+    console.warn(
+      `[getAdminUsers] ${duplicateNames.length} display name(s) are shared by more than one profile - possible ` +
+        `duplicate accounts (e.g. separate email/Google sign-ups never linked): ` +
+        duplicateNames.map((g) => `"${g.display}" (${g.count})`).join(", ")
+    );
   }
 
   const tradeCounts = new Map<string, number>();
@@ -83,7 +126,7 @@ export async function getAdminUsers(searchTerm?: string): Promise<AdminUserRow[]
 
   const matchCountByUser = await getMatchCountsByUser();
 
-  let rows = profiles.map((p) => {
+  let rows = profileRows.map((p) => {
     const counts = summarizeQuantities(quantitiesByUser.get(p.id) ?? []);
     return {
       ...p,
