@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetchAllRows";
 import { getStickerIdToCodeMap } from "@/lib/data/stickers";
 import { getCityCoordinates } from "@/lib/cities";
 import { deterministicJitter } from "@/lib/distance";
@@ -22,14 +23,23 @@ export async function getMatchesForCurrentUser(): Promise<MatchesForUser> {
 
   if (!user) return { matches: [], myCity: "", locationEnabled: false, hasCollectionData: false };
 
-  const [profileRes, myProfileRes, userStickersRes, idToCode, locationsRes] = await Promise.all([
-    supabase.from("profiles").select("*").eq("status", "active"),
+  // Both `profiles` (every active user) and `user_stickers` (every row for
+  // every user) are platform-wide, unfiltered reads - paginated via
+  // fetchAllRows() rather than a bare .select(), which silently truncates
+  // to Supabase's default 1000-row cap with no error once the platform
+  // has enough rows (for user_stickers, that's just a couple of fairly
+  // complete collections - 48 teams x 20 stickers each). An un-paginated
+  // read here wouldn't just corrupt admin statistics - it would silently
+  // drop real collectors (and their stickers) from every other user's
+  // match results the moment the table crossed that line.
+  const [profiles, myProfileRes, allUserStickers, idToCode, locationsRes] = await Promise.all([
+    fetchAllRows<Profile>((from, to) => supabase.from("profiles").select("*").eq("status", "active").range(from, to)),
     supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
-    // Every row for every user - the matching algorithm itself only needs
-    // available-duplicate (quantity >= 2) and explicit-missing (quantity =
-    // 0) rows, but hasCollectionData below also needs plain "owned, no
-    // duplicate" (quantity = 1) rows, so nothing is filtered out here.
-    supabase.from("user_stickers").select("*"),
+    // The matching algorithm itself only needs available-duplicate
+    // (quantity >= 2) and explicit-missing (quantity = 0) rows, but
+    // hasCollectionData below also needs plain "owned, no duplicate"
+    // (quantity = 1) rows, so nothing is filtered out here.
+    fetchAllRows<UserSticker>((from, to) => supabase.from("user_stickers").select("*").range(from, to)),
     getStickerIdToCodeMap(),
     supabase.rpc("nearby_locations", { max_km: 300 }),
   ]);
@@ -50,8 +60,7 @@ export async function getMatchesForCurrentUser(): Promise<MatchesForUser> {
       });
   }
 
-  const profiles = ((profileRes.data as Profile[]) ?? []).filter((p) => p.id !== user.id);
-  const allUserStickers = (userStickersRes.data as UserSticker[]) ?? [];
+  const otherProfiles = profiles.filter((p) => p.id !== user.id);
   const locationByUserId = new Map<
     string,
     { distanceKm: number; approxLat: number; approxLng: number }
@@ -112,7 +121,7 @@ export async function getMatchesForCurrentUser(): Promise<MatchesForUser> {
     return { approxLat: null, approxLng: null, locationSource: null };
   }
 
-  const candidates: MatchCandidateInput[] = profiles.map((p) => {
+  const candidates: MatchCandidateInput[] = otherProfiles.map((p) => {
     const theirs = byUser.get(p.id) ?? [];
     const theirDups = theirs.filter((d) => hasDuplicateAvailable(d.quantity));
     const theirMissing = theirs.filter((m) => isMissing(m.quantity));

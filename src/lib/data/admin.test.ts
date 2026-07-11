@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { summarizeQuantities } from "@/lib/collectionStatus";
 
-const { mockFrom, mockRpc, mockGetUser, tableMocks } = vi.hoisted(() => {
+const { mockFrom, mockRpc, mockGetUser, tableMocks, chainableRange } = vi.hoisted(() => {
   const tableMocks = new Map<string, unknown>();
   return {
     mockRpc: vi.fn(async () => ({ data: [] })),
@@ -12,6 +12,25 @@ const { mockFrom, mockRpc, mockGetUser, tableMocks } = vi.hoisted(() => {
       return impl;
     }),
     tableMocks,
+    // Platform-wide reads are now paginated via fetchAllRows() -> .range() -
+    // this builds a chainable mock where .select()/.order()/.eq()/.in()
+    // all return itself, terminated by .range(from, to) resolving to the
+    // correctly-sliced page of `data` (inclusive `to`, matching Supabase's
+    // real .range() semantics) - this must actually slice rather than
+    // always return the full array, otherwise a >1000-row test would loop
+    // forever (fetchAllRows keeps paging until a page comes back shorter
+    // than a full page).
+    chainableRange: (data: unknown[]) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const obj: any = {};
+      const chain = () => obj;
+      obj.select = vi.fn(chain);
+      obj.order = vi.fn(chain);
+      obj.eq = vi.fn(chain);
+      obj.in = vi.fn(chain);
+      obj.range = vi.fn((from: number, to: number) => Promise.resolve({ data: data.slice(from, to + 1), error: null }));
+      return obj;
+    },
   };
 });
 
@@ -45,19 +64,15 @@ describe("getAdminStats uses the canonical collectionStatus rules (no parallel c
     // A realistic, mixed platform-wide set of (user, sticker) quantities.
     const quantities = [0, 0, 0, 1, 1, 2, 2, 3, 5, 0];
 
-    tableMocks.set("profiles", {
-      select: vi.fn().mockResolvedValue({
-        data: quantities.map((_, i) => ({ id: `u${i}`, status: "active", location_enabled: false })),
-      }),
-    });
-    tableMocks.set("user_stickers", {
-      select: vi.fn().mockResolvedValue({
-        data: quantities.map((quantity, i) => ({ user_id: `u${i}`, sticker_id: `s${i}`, quantity })),
-      }),
-    });
-    tableMocks.set("trade_requests", {
-      select: vi.fn().mockResolvedValue({ data: [] }),
-    });
+    tableMocks.set(
+      "profiles",
+      chainableRange(quantities.map((_, i) => ({ id: `u${i}`, status: "active", location_enabled: false })))
+    );
+    tableMocks.set(
+      "user_stickers",
+      chainableRange(quantities.map((quantity, i) => ({ user_id: `u${i}`, sticker_id: `s${i}`, quantity })))
+    );
+    tableMocks.set("trade_requests", chainableRange([]));
 
     const expected = summarizeQuantities(quantities);
     const stats = await getAdminStats();
@@ -68,16 +83,40 @@ describe("getAdminStats uses the canonical collectionStatus rules (no parallel c
   });
 
   it("a quantity-1 row (owned, no spare) never counts as a duplicate platform-wide", async () => {
-    tableMocks.set("profiles", { select: vi.fn().mockResolvedValue({ data: [] }) });
-    tableMocks.set("user_stickers", {
-      select: vi.fn().mockResolvedValue({ data: [{ user_id: "u1", sticker_id: "s1", quantity: 1 }] }),
-    });
-    tableMocks.set("trade_requests", { select: vi.fn().mockResolvedValue({ data: [] }) });
+    tableMocks.set("profiles", chainableRange([]));
+    tableMocks.set("user_stickers", chainableRange([{ user_id: "u1", sticker_id: "s1", quantity: 1 }]));
+    tableMocks.set("trade_requests", chainableRange([]));
 
     const stats = await getAdminStats();
     expect(stats.totalDuplicates).toBe(0);
     expect(stats.totalDuplicateCopies).toBe(0);
     expect(stats.totalMissing).toBe(0);
+  });
+
+  it("pages through more than 1000 user_stickers rows without dropping any - the exact scenario that hid a collector's updated collection from platform-wide admin aggregates", async () => {
+    // 1200 rows platform-wide (just over Supabase's default 1000-row cap),
+    // including one collector ("late-user") whose rows would have landed
+    // entirely past the old, un-paginated cutoff.
+    const rows = Array.from({ length: 1195 }, (_, i) => ({ user_id: `u${i}`, sticker_id: `s${i}`, quantity: 1 }));
+    rows.push(
+      { user_id: "late-user", sticker_id: "s-late-1", quantity: 2 },
+      { user_id: "late-user", sticker_id: "s-late-2", quantity: 0 },
+      { user_id: "late-user", sticker_id: "s-late-3", quantity: 1 },
+      { user_id: "late-user", sticker_id: "s-late-4", quantity: 3 },
+      { user_id: "late-user", sticker_id: "s-late-5", quantity: 1 }
+    );
+    expect(rows.length).toBeGreaterThan(1000);
+
+    tableMocks.set("profiles", chainableRange([]));
+    tableMocks.set("user_stickers", chainableRange(rows));
+    tableMocks.set("trade_requests", chainableRange([]));
+
+    const expected = summarizeQuantities(rows.map((r) => r.quantity));
+    const stats = await getAdminStats();
+
+    expect(stats.totalDuplicates).toBe(expected.duplicateUnique);
+    expect(stats.totalMissing).toBe(expected.missingUnique);
+    expect(stats.totalDuplicateCopies).toBe(expected.totalDuplicateCopies);
   });
 });
 
@@ -244,19 +283,13 @@ describe("getAdminUserCollectionDetail authorization (requirement: admin-only, b
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: { role: "admin" } }),
-      order: vi.fn().mockReturnThis(),
     });
-    // getAdminUserCollectionDetail's own three parallel queries reuse the
-    // same "profiles"-shaped builder object above for .from("teams") calls
-    // too via a distinct table key - register them explicitly.
-    tableMocks.set("teams", {
-      select: vi.fn().mockReturnThis(),
-      order: vi.fn().mockReturnThis(),
-      then: (resolve: (v: unknown) => void) => resolve({ data: [{ code: "GER", name_he: "גרמניה" }] }),
-    });
-    tableMocks.set("stickers", {
-      select: vi.fn().mockResolvedValue({ data: [{ id: "s1", team_code: "GER", number: 1, code: "GER-1" }] }),
-    });
+    // getAdminUserCollectionDetail's "teams"/"stickers" reads are
+    // platform-wide and paginated via fetchAllRows() -> .range(); its
+    // "user_stickers" read stays a bare, per-user .eq() (max ~960 rows for
+    // one collector, never at risk of the 1000-row cap).
+    tableMocks.set("teams", chainableRange([{ code: "GER", name_he: "גרמניה" }]));
+    tableMocks.set("stickers", chainableRange([{ id: "s1", team_code: "GER", number: 1, code: "GER-1" }]));
     tableMocks.set("user_stickers", {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockResolvedValue({ data: [{ sticker_id: "s1", quantity: 2, listing_type: "trade", price: null }] }),
@@ -278,7 +311,6 @@ describe("getAdminUserCollectionDetail matches the same canonical rules as getCo
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: { role: "admin" } }),
-      order: vi.fn().mockReturnThis(),
     });
   });
 
@@ -287,22 +319,17 @@ describe("getAdminUserCollectionDetail matches the same canonical rules as getCo
     // them: GER-1 (quantity 2 - owned + 1 duplicate) and GER-2 (quantity 0
     // - explicitly missing). GER-3/4/5 have no row at all - they are
     // *unmarked* (gray), never even looked at, not "missing".
-    tableMocks.set("teams", {
-      select: vi.fn().mockReturnThis(),
-      order: vi.fn().mockReturnThis(),
-      then: (resolve: (v: unknown) => void) => resolve({ data: [{ code: "GER", name_he: "גרמניה" }] }),
-    });
-    tableMocks.set("stickers", {
-      select: vi.fn().mockResolvedValue({
-        data: [
-          { id: "s1", team_code: "GER", number: 1, code: "GER-1" },
-          { id: "s2", team_code: "GER", number: 2, code: "GER-2" },
-          { id: "s3", team_code: "GER", number: 3, code: "GER-3" },
-          { id: "s4", team_code: "GER", number: 4, code: "GER-4" },
-          { id: "s5", team_code: "GER", number: 5, code: "GER-5" },
-        ],
-      }),
-    });
+    tableMocks.set("teams", chainableRange([{ code: "GER", name_he: "גרמניה" }]));
+    tableMocks.set(
+      "stickers",
+      chainableRange([
+        { id: "s1", team_code: "GER", number: 1, code: "GER-1" },
+        { id: "s2", team_code: "GER", number: 2, code: "GER-2" },
+        { id: "s3", team_code: "GER", number: 3, code: "GER-3" },
+        { id: "s4", team_code: "GER", number: 4, code: "GER-4" },
+        { id: "s5", team_code: "GER", number: 5, code: "GER-5" },
+      ])
+    );
     tableMocks.set("user_stickers", {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockResolvedValue({
@@ -416,19 +443,14 @@ describe("Collector, admin list, and admin detail agree for every user (multi-us
       location_enabled: false,
       created_at: "2026-01-01T00:00:00Z",
     }));
-    // "profiles" is queried two different ways across this call chain:
-    // getAdminUsers() does .select("*").order(...), while
-    // getMatchCountsByUser() (called internally by getAdminUsers()) does a
-    // bare .select("id, status") with no further chaining, awaited
-    // directly - so this mock's .select() return value must itself be
-    // awaitable (via .then) *and* expose .order() for the other call site.
-    tableMocks.set("profiles", {
-      select: vi.fn(() => ({
-        then: (resolve: (v: unknown) => void) => resolve({ data: profileRows }),
-        order: vi.fn().mockResolvedValue({ data: profileRows }),
-      })),
-    });
-    tableMocks.set("trade_requests", { select: vi.fn().mockResolvedValue({ data: [] }) });
+    // "profiles" is queried two different ways across this call chain -
+    // getAdminUsers() does .select("*").order(...).range(...), while
+    // getMatchCountsByUser() (called internally by getAdminUsers()) does
+    // .select("id, status").range(...) with no .order() - chainableRange()
+    // supports both shapes uniformly since every method just returns the
+    // same chainable object until .range() is finally called.
+    tableMocks.set("profiles", chainableRange(profileRows));
+    tableMocks.set("trade_requests", chainableRange([]));
   }
 
   beforeEach(() => {
@@ -443,7 +465,7 @@ describe("Collector, admin list, and admin detail agree for every user (multi-us
       if (name === "admin_get_user_emails") return { data: [] };
       return { data: [] };
     });
-    tableMocks.set("user_stickers", { select: vi.fn().mockResolvedValue({ data: allUserStickerRows() }) });
+    tableMocks.set("user_stickers", chainableRange(allUserStickerRows()));
 
     const users = await getAdminUsers();
     expect(users).toHaveLength(4);
@@ -468,12 +490,8 @@ describe("Collector, admin list, and admin detail agree for every user (multi-us
         eq: vi.fn().mockReturnThis(),
         maybeSingle: vi.fn().mockResolvedValue({ data: { role: "admin" } }),
       });
-      tableMocks.set("teams", {
-        select: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        then: (resolve: (v: unknown) => void) => resolve({ data: TEAMS }),
-      });
-      tableMocks.set("stickers", { select: vi.fn().mockResolvedValue({ data: CATALOG }) });
+      tableMocks.set("teams", chainableRange(TEAMS));
+      tableMocks.set("stickers", chainableRange(CATALOG));
       tableMocks.set("user_stickers", {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockResolvedValue({ data: ROWS_BY_USER[userId] }),
