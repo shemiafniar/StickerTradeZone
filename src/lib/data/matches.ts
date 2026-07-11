@@ -151,6 +151,13 @@ export async function getMatchesForCurrentUser(): Promise<MatchesForUser> {
   });
 
   const matches = computeMatches(myDuplicateCodes, myMissingCodes, myProfile.city, candidates);
+  const roiCandidate = candidates.find((candidate) => candidate.fullName === "רועי ליא");
+  const roiMatch = matches.find((match) => match.fullName === "רועי ליא");
+
+  console.log("[MATCH DEBUG] My ARG-17 duplicate:", myDuplicateCodes.includes("ARG-17"));
+  console.log("[MATCH DEBUG] Roi candidate:", roiCandidate);
+  console.log("[MATCH DEBUG] Roi match:", roiMatch);
+  console.log("[MATCH DEBUG] Total matches:", matches.length);
   // Broader than myDuplicateCodes/myMissingCodes above (which only cover
   // "available duplicate" and "explicit missing" rows, since that's all
   // the matching algorithm itself needs): a collector who has only marked
