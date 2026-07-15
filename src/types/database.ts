@@ -24,6 +24,8 @@ export type Profile = {
   matches_first_viewed_at: string | null;
   /** Set the first time this user successfully creates a trade request. */
   first_trade_started_at: string | null;
+  /** The changelog version (see src/lib/changelog.ts) this user last dismissed the "What's New" modal for. Null = never seen any changelog. */
+  last_seen_changelog_version: string | null;
   created_at: string;
   updated_at: string;
 };
