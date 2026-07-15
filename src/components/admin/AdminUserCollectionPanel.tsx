@@ -35,19 +35,26 @@ export function AdminUserCollectionPanel({ detail }: { detail: AdminUserCollecti
     if (stateFilter !== "all") rows = rows.filter((s) => s.state === stateFilter);
     if (term) rows = rows.filter((s) => s.code.includes(term));
 
+    // Every tiebreak/default falls back to team + numeric in-team number,
+    // never the code *string* - "FWC-10" must sort after "FWC-9", not
+    // between "FWC-1" and "FWC-2" the way a plain string comparison would
+    // place it (and every ordinary team has the same issue past sticker 9).
+    const byTeamThenNumber = (a: (typeof rows)[number], b: (typeof rows)[number]) =>
+      a.teamCode.localeCompare(b.teamCode) || a.number - b.number;
+
     const sorted = [...rows];
     switch (sortKey) {
       case "team":
-        sorted.sort((a, b) => a.teamCode.localeCompare(b.teamCode) || a.number - b.number);
+        sorted.sort(byTeamThenNumber);
         break;
       case "state":
-        sorted.sort((a, b) => a.state.localeCompare(b.state) || a.code.localeCompare(b.code));
+        sorted.sort((a, b) => a.state.localeCompare(b.state) || byTeamThenNumber(a, b));
         break;
       case "quantity":
-        sorted.sort((a, b) => (b.quantity ?? -1) - (a.quantity ?? -1) || a.code.localeCompare(b.code));
+        sorted.sort((a, b) => (b.quantity ?? -1) - (a.quantity ?? -1) || byTeamThenNumber(a, b));
         break;
       default:
-        sorted.sort((a, b) => a.code.localeCompare(b.code));
+        sorted.sort(byTeamThenNumber);
     }
     return sorted;
   }, [detail.stickers, teamFilter, stateFilter, search, sortKey]);

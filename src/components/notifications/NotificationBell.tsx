@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useNotifications } from "@/components/notifications/NotificationsContext";
 import { useClickOutside } from "@/lib/useClickOutside";
 import type { Notification } from "@/types/database";
@@ -29,22 +28,20 @@ const notificationIcons: Record<string, string> = {
 const BELL_DROPDOWN_LIMIT = 15;
 
 export function NotificationBell() {
-  const { notifications, unreadCount, isMarkingAll, markAsRead, markAllAsRead } = useNotifications();
+  const { notifications, unreadCount, isMarkingAll, markAllAsRead, openNotification } = useNotifications();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const router = useRouter();
 
   useClickOutside(containerRef, () => setOpen(false));
 
+  // Closes the dropdown and navigates immediately (see openNotification's
+  // doc comment) - a failed mark-as-read is surfaced as an inline error but
+  // never blocks or delays the navigation that already happened.
   async function handleNotificationClick(notification: Notification) {
-    if (!notification.read_at) {
-      const result = await markAsRead(notification.id);
-      if (result.error) setError(result.error);
-    }
     setOpen(false);
-    if (notification.link) router.push(notification.link);
-    else router.refresh();
+    const result = await openNotification(notification);
+    if (result.error) setError(result.error);
   }
 
   async function handleMarkAllRead() {

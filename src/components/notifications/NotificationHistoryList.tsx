@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useNotifications } from "@/components/notifications/NotificationsContext";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -20,22 +19,19 @@ function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" });
 }
 
-export function NotificationHistoryList() {
-  const { notifications, isMarkingAll, markAsRead, markAllAsRead } = useNotifications();
+export function NotificationHistoryList({ targetUnavailable = false }: { targetUnavailable?: boolean }) {
+  const { notifications, isMarkingAll, markAllAsRead, openNotification } = useNotifications();
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
   const hasUnread = notifications.some((n) => !n.read_at);
 
+  // Same shared behavior as NotificationBell - navigates immediately via
+  // openNotification (see its doc comment in NotificationsContext.tsx), a
+  // failed mark-as-read is only ever shown as an inline error afterward,
+  // never allowed to block or delay navigation.
   async function handleClick(notification: Notification) {
     setError(null);
-    if (!notification.read_at) {
-      const result = await markAsRead(notification.id);
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-    }
-    if (notification.link) router.push(notification.link);
+    const result = await openNotification(notification);
+    if (result.error) setError(result.error);
   }
 
   async function handleMarkAllRead() {
@@ -59,6 +55,12 @@ export function NotificationHistoryList() {
 
   return (
     <div>
+      {targetUnavailable && (
+        <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+          הפריט שההתראה הפנתה אליו אינו זמין יותר - ייתכן שהוא נמחק או שאין לך יותר גישה אליו.
+        </p>
+      )}
+
       {error && (
         <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
           {error}

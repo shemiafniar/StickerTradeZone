@@ -9,6 +9,8 @@ import { TradeStatusBadge } from "@/components/ui/Badge";
 import { ShareCard } from "@/components/share/ShareCard";
 import { OnboardingModal } from "@/components/dashboard/OnboardingModal";
 import { OnboardingChecklist, type ChecklistItem } from "@/components/dashboard/OnboardingChecklist";
+import { ChangelogModal } from "@/components/dashboard/ChangelogModal";
+import { CHANGELOG, shouldShowChangelogModal } from "@/lib/changelog";
 import Link from "next/link";
 
 export const metadata = { title: "לוח בקרה" };
@@ -56,9 +58,15 @@ export default async function DashboardPage() {
     },
   ];
 
+  // Never stack modals: a brand-new user sees onboarding first, and only
+  // sees "What's New" on a later visit once onboarding is out of the way.
+  const showOnboarding = !profile.onboarding_completed_at;
+  const showChangelog = !showOnboarding && shouldShowChangelogModal(profile.last_seen_changelog_version);
+
   return (
     <div>
-      {!profile.onboarding_completed_at && <OnboardingModal />}
+      {showOnboarding && <OnboardingModal />}
+      {showChangelog && <ChangelogModal entry={CHANGELOG[0]} />}
       <div className="mb-6 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold">שלום, {profile.full_name || "אספן"} 👋</h1>

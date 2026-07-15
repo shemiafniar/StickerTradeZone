@@ -1,5 +1,6 @@
 import type { BackScanResult, VisionProvider } from "@/lib/vision/types";
 import { VisionApiError, VisionParseError, VisionTimeoutError } from "@/lib/vision/errors";
+import { isValidStickerNumberForTeam } from "@/lib/stickerCodes";
 
 const DEFAULT_MODEL = "gpt-4o-mini";
 // OpenAI Vision requests are usually done well within this, but a hung
@@ -126,8 +127,7 @@ If you cannot read an identifier confidently, still include your best guess with
             typeof d.teamCode === "string" &&
             /^[A-Za-z]{3}$/.test(d.teamCode) &&
             Number.isFinite(d.number) &&
-            d.number >= 1 &&
-            d.number <= 20
+            isValidStickerNumberForTeam(d.teamCode, Math.round(d.number))
         )
         .map((d) => ({
           teamCode: d.teamCode.toUpperCase(),

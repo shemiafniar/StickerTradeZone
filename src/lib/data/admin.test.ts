@@ -4,7 +4,8 @@ import { summarizeQuantities } from "@/lib/collectionStatus";
 const { mockFrom, mockRpc, mockGetUser, tableMocks, chainableRange } = vi.hoisted(() => {
   const tableMocks = new Map<string, unknown>();
   return {
-    mockRpc: vi.fn(async () => ({ data: [] })),
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    mockRpc: vi.fn(async (..._args: unknown[]) => ({ data: [] })),
     mockGetUser: vi.fn(),
     mockFrom: vi.fn((table: string) => {
       const impl = tableMocks.get(table);
@@ -169,14 +170,12 @@ describe("getAdminUsers() - tracing exactly how a correct collection count could
   });
 
   it("reports the exact production numbers (12 owned / 0 missing / 11 duplicates / 11 copies) when the profile id matches the user_stickers rows", async () => {
-    tableMocks.set("profiles", {
-      select: vi.fn(() => ({
-        then: (resolve: (v: unknown) => void) => resolve({ data: [{ id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }] }),
-        order: vi.fn().mockResolvedValue({ data: [{ id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }] }),
-      })),
-    });
-    tableMocks.set("user_stickers", { select: vi.fn().mockResolvedValue({ data: REAL_USER_STICKER_ROWS }) });
-    tableMocks.set("trade_requests", { select: vi.fn().mockResolvedValue({ data: [] }) });
+    tableMocks.set(
+      "profiles",
+      chainableRange([{ id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }])
+    );
+    tableMocks.set("user_stickers", chainableRange(REAL_USER_STICKER_ROWS));
+    tableMocks.set("trade_requests", chainableRange([]));
 
     const users = await getAdminUsers();
     const row = users.find((u) => u.id === REAL_USER_ID);
@@ -197,20 +196,15 @@ describe("getAdminUsers() - tracing exactly how a correct collection count could
     // holds the 12-row collection (REAL_USER_ID) has no profiles row at
     // all to attach to (e.g. deleted, or never the one actually viewed).
     const EMPTY_LOOKALIKE_ID = "11111111-1111-1111-1111-111111111199";
-    tableMocks.set("profiles", {
-      select: vi.fn(() => ({
-        then: (resolve: (v: unknown) => void) =>
-          resolve({ data: [{ id: EMPTY_LOOKALIKE_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }] }),
-        order: vi.fn().mockResolvedValue({
-          data: [{ id: EMPTY_LOOKALIKE_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }],
-        }),
-      })),
-    });
+    tableMocks.set(
+      "profiles",
+      chainableRange([{ id: EMPTY_LOOKALIKE_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" }])
+    );
     // The 12 real rows exist and are fetched (proving the data itself is
     // never lost or filtered out at the query level) - they're simply
     // keyed to a user_id with no corresponding profile in this result set.
-    tableMocks.set("user_stickers", { select: vi.fn().mockResolvedValue({ data: REAL_USER_STICKER_ROWS }) });
-    tableMocks.set("trade_requests", { select: vi.fn().mockResolvedValue({ data: [] }) });
+    tableMocks.set("user_stickers", chainableRange(REAL_USER_STICKER_ROWS));
+    tableMocks.set("trade_requests", chainableRange([]));
 
     const users = await getAdminUsers();
 
@@ -228,25 +222,15 @@ describe("getAdminUsers() - tracing exactly how a correct collection count could
 
   it("flags two profiles sharing the same display name as a possible duplicate account", async () => {
     const secondId = "22222222-2222-2222-2222-222222222299";
-    tableMocks.set("profiles", {
-      select: vi.fn(() => ({
-        then: (resolve: (v: unknown) => void) =>
-          resolve({
-            data: [
-              { id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" },
-              { id: secondId, full_name: "Eyal Afinzar", city: "חיפה", status: "active" },
-            ],
-          }),
-        order: vi.fn().mockResolvedValue({
-          data: [
-            { id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" },
-            { id: secondId, full_name: "Eyal Afinzar", city: "חיפה", status: "active" },
-          ],
-        }),
-      })),
-    });
-    tableMocks.set("user_stickers", { select: vi.fn().mockResolvedValue({ data: REAL_USER_STICKER_ROWS }) });
-    tableMocks.set("trade_requests", { select: vi.fn().mockResolvedValue({ data: [] }) });
+    tableMocks.set(
+      "profiles",
+      chainableRange([
+        { id: REAL_USER_ID, full_name: "Eyal Afinzar", city: "תל אביב יפו", status: "active" },
+        { id: secondId, full_name: "Eyal Afinzar", city: "חיפה", status: "active" },
+      ])
+    );
+    tableMocks.set("user_stickers", chainableRange(REAL_USER_STICKER_ROWS));
+    tableMocks.set("trade_requests", chainableRange([]));
 
     await getAdminUsers();
 
@@ -461,7 +445,8 @@ describe("Collector, admin list, and admin detail agree for every user (multi-us
 
   it("getAdminUsers() matches summarizeQuantities() on each user's own raw rows, for every user regardless of role or collection size", async () => {
     setupSharedTables();
-    mockRpc.mockImplementation(async (name: string) => {
+    mockRpc.mockImplementation(async (...args: unknown[]) => {
+      const name = args[0];
       if (name === "admin_get_user_emails") return { data: [] };
       return { data: [] };
     });

@@ -1,16 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAllRows";
 import { getStickerIdToCodeMap } from "@/lib/data/stickers";
-import {
-  availableDuplicates,
-  getStickerCellState,
-  hasDuplicateAvailable,
-  isMissing,
-  isOwned,
-  summarizeQuantities,
-  type StickerCellState,
-} from "@/lib/collectionStatus";
+import { hasDuplicateAvailable, isMissing, isOwned, summarizeQuantities } from "@/lib/collectionStatus";
 import { requireAdmin } from "@/lib/adminAuth";
+import { buildCollectionBreakdown, type CollectionBreakdown, type CollectionStickerState } from "@/lib/data/collectionBreakdown";
 import type { Profile, TradeRequest, TradeRequestItem, UserSticker } from "@/types/database";
 
 // ============================================================================
@@ -452,45 +445,19 @@ export async function getAdminStatistics(): Promise<AdminStatistics> {
 // intentionally NOT exposed via any user-facing route or public API - the
 // only caller is /admin/users/[id]/page.tsx, itself gated by the existing
 // admin/layout.tsx server-side redirect.
+//
+// The actual row-shaping logic lives in data/collectionBreakdown.ts,
+// shared with the user-facing collection export
+// (data/collectionExport.ts::getMyCollectionForExport()) - this function
+// is now just "check the caller is an admin, then run the shared builder
+// for whatever userId was asked for."
 // ============================================================================
 
-/** Re-exported so existing importers (e.g. AdminUserCollectionPanel.tsx) don't need to know this now comes from collectionStatus.ts. */
-export type StickerRowState = StickerCellState;
-
-export interface AdminStickerRow {
-  code: string;
-  teamCode: string;
-  teamNameHe: string;
-  number: number;
-  /** null = unmarked (no user_stickers row at all) - see collectionStatus.ts. Never counted as "missing". */
-  quantity: number | null;
-  availableDuplicates: number;
-  state: StickerRowState;
-  listingType: string | null;
-  price: number | null;
-}
-
-export interface AdminTeamBreakdown {
-  code: string;
-  nameHe: string;
-  owned: number;
-  missing: number;
-  duplicates: number;
-  duplicateCopies: number;
-  total: number;
-  completionPct: number;
-}
-
-export interface AdminUserCollectionDetail {
-  ownedUnique: number;
-  missingUnique: number;
-  duplicateUnique: number;
-  totalDuplicateCopies: number;
-  totalStickers: number;
-  completionPct: number;
-  teams: AdminTeamBreakdown[];
-  stickers: AdminStickerRow[];
-}
+/** Re-exported so existing importers (e.g. AdminUserCollectionPanel.tsx) don't need to know this now comes from collectionBreakdown.ts/collectionStatus.ts. */
+export type StickerRowState = CollectionStickerState;
+export type AdminStickerRow = CollectionBreakdown["stickers"][number];
+export type AdminTeamBreakdown = CollectionBreakdown["teams"][number];
+export type AdminUserCollectionDetail = CollectionBreakdown;
 
 /**
  * Defense in depth: re-verifies the caller is an admin even though every
@@ -501,95 +468,5 @@ export interface AdminUserCollectionDetail {
  */
 export async function getAdminUserCollectionDetail(userId: string): Promise<AdminUserCollectionDetail> {
   const { supabase } = await requireAdmin();
-
-  // The sticker catalog is currently 960 rows (48 teams x 20) - already
-  // close enough to Supabase's default 1000-row cap that adding a handful
-  // more teams would silently start dropping stickers from a bare
-  // .select(); paginated defensively here for the same reason as every
-  // other platform-wide query in this file (see fetchAllRows.ts).
-  const [teamRows, stickerRows, { data: userStickers }] = await Promise.all([
-    fetchAllRows<{ code: string; name_he: string }>((from, to) =>
-      supabase
-        .from("teams")
-        .select("code, name_he")
-        .order("group_order", { ascending: true })
-        .order("team_order", { ascending: true })
-        .range(from, to)
-    ),
-    fetchAllRows<{ id: string; team_code: string; number: number; code: string }>((from, to) =>
-      supabase.from("stickers").select("id, team_code, number, code").range(from, to)
-    ),
-    supabase.from("user_stickers").select("sticker_id, quantity, listing_type, price").eq("user_id", userId),
-  ]);
-  const ownedByStickerId = new Map(
-    ((userStickers as Pick<UserSticker, "sticker_id" | "quantity" | "listing_type" | "price">[]) ?? []).map((u) => [
-      u.sticker_id,
-      u,
-    ])
-  );
-  const teamNameByCode = new Map(teamRows.map((t) => [t.code, t.name_he]));
-
-  // IMPORTANT: `quantity` stays `null` for a sticker with no user_stickers
-  // row at all ("unmarked" - not yet looked at), distinct from an explicit
-  // quantity = 0 row ("missing" - the collector actively marked it as
-  // needed). Folding "unmarked" into "missing" here would inflate this
-  // page's missing count to include the collector's entire *unmarked*
-  // catalog, which is exactly the sync bug this fixes: getCollectionCounts()/
-  // getAdminUsers() only ever look at rows that actually exist, so this
-  // detail page must do the same for its headline numbers to agree with
-  // them. getStickerCellState()/availableDuplicates() are the same
-  // collectionStatus.ts helpers used everywhere else - no separate logic.
-  const allStickerRows: AdminStickerRow[] = stickerRows
-    .map((s) => {
-      const owned = ownedByStickerId.get(s.id);
-      const quantity = owned?.quantity ?? null;
-      return {
-        code: s.code,
-        teamCode: s.team_code,
-        teamNameHe: teamNameByCode.get(s.team_code) ?? s.team_code,
-        number: s.number,
-        quantity,
-        availableDuplicates: quantity === null ? 0 : availableDuplicates(quantity),
-        state: getStickerCellState(quantity),
-        listingType: owned?.listing_type ?? null,
-        price: owned?.price ?? null,
-      };
-    })
-    .sort((a, b) => a.code.localeCompare(b.code));
-
-  // Only rows that actually exist (quantity !== null) feed the aggregate
-  // counts - identical in spirit to getCollectionCounts()'s
-  // `.from("user_stickers")...` query, which by construction never sees an
-  // unmarked sticker either (there's no row for it to return).
-  const existingQuantities = (quantities: (number | null)[]) =>
-    quantities.filter((q): q is number => q !== null);
-
-  const overall = summarizeQuantities(existingQuantities(allStickerRows.map((s) => s.quantity)));
-
-  const teamBreakdowns: AdminTeamBreakdown[] = teamRows.map((team) => {
-    const teamStickers = allStickerRows.filter((s) => s.teamCode === team.code);
-    const counts = summarizeQuantities(existingQuantities(teamStickers.map((s) => s.quantity)));
-    const total = teamStickers.length;
-    return {
-      code: team.code,
-      nameHe: team.name_he,
-      owned: counts.ownedUnique,
-      missing: counts.missingUnique,
-      duplicates: counts.duplicateUnique,
-      duplicateCopies: counts.totalDuplicateCopies,
-      total,
-      completionPct: total > 0 ? Math.round((counts.ownedUnique / total) * 100) : 0,
-    };
-  });
-
-  return {
-    ownedUnique: overall.ownedUnique,
-    missingUnique: overall.missingUnique,
-    duplicateUnique: overall.duplicateUnique,
-    totalDuplicateCopies: overall.totalDuplicateCopies,
-    totalStickers: allStickerRows.length,
-    completionPct: allStickerRows.length > 0 ? Math.round((overall.ownedUnique / allStickerRows.length) * 100) : 0,
-    teams: teamBreakdowns,
-    stickers: allStickerRows,
-  };
+  return buildCollectionBreakdown(supabase, userId);
 }

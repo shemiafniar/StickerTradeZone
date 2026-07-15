@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { markAllNotificationsReadAction, markNotificationReadAction } from "@/lib/actions/notifications";
 import type { Notification } from "@/types/database";
@@ -11,6 +12,18 @@ interface NotificationsContextValue {
   isMarkingAll: boolean;
   markAsRead: (notificationId: string) => Promise<{ error?: string }>;
   markAllAsRead: () => Promise<{ error?: string }>;
+  /**
+   * The single, shared "a notification was clicked" behavior - used by both
+   * NotificationBell and NotificationHistoryList so they can never diverge
+   * again. Navigates immediately to the server-validated redirect route
+   * (`/dashboard/notifications/go/{id}`), which re-checks the target itself
+   * and falls back safely if it's gone - and *separately* attempts to mark
+   * the notification read for the optimistic badge update. The two are
+   * intentionally decoupled: navigation is fired synchronously and never
+   * waits on (or is blocked by) the mark-as-read call, whose result is only
+   * returned so a caller can surface an error message if it wants to.
+   */
+  openNotification: (notification: Notification) => Promise<{ error?: string }>;
 }
 
 const NotificationsContext = createContext<NotificationsContextValue | null>(null);
@@ -40,6 +53,7 @@ export function NotificationsProvider({
   const [notifications, setNotifications] = useState(initialNotifications);
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
+  const router = useRouter();
 
   // Re-sync from fresh server-fetched props (e.g. after a full navigation)
   // without discarding in-flight optimistic state from an effect - this is
@@ -115,8 +129,20 @@ export function NotificationsProvider({
     return {};
   }, [notifications, unreadCount]);
 
+  const openNotification = useCallback(
+    (notification: Notification) => {
+      // Fired synchronously, before awaiting anything below - a slow or
+      // failed mark-as-read call must never delay or block this.
+      router.push(`/dashboard/notifications/go/${notification.id}`);
+      return markAsRead(notification.id);
+    },
+    [router, markAsRead]
+  );
+
   return (
-    <NotificationsContext.Provider value={{ notifications, unreadCount, isMarkingAll, markAsRead, markAllAsRead }}>
+    <NotificationsContext.Provider
+      value={{ notifications, unreadCount, isMarkingAll, markAsRead, markAllAsRead, openNotification }}
+    >
       {children}
     </NotificationsContext.Provider>
   );

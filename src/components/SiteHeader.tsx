@@ -15,6 +15,7 @@ export async function SiteHeader() {
     { href: "/dashboard/matches", label: "התאמות" },
     { href: "/dashboard/trades", label: "טריידים" },
     { href: "/dashboard/support", label: "תקלות ומשוב", icon: "🛟" },
+    { href: "/dashboard/changelog", label: "מה חדש", icon: "🆕" },
     { href: "/dashboard/profile", label: "פרופיל" },
   ];
 

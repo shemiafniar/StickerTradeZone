@@ -51,6 +51,8 @@ bootstrap passes.
   pages, matching, trade validation, admin statistics) via one shared helper - see
   [Quantity-based duplicates & World Cup group ordering](#quantity-based-duplicates--world-cup-group-ordering-0017_quantity_and_groupssql)
   below.
+- **FWC's bonus sticker set numbers 0-19, not 1-20** like every ordinary team - see
+  [FWC's special sticker numbering](#fwcs-special-sticker-numbering-0019_fwc_numberingsql) below.
 - **Guided onboarding** - a short, skippable first-time walkthrough plus a live dashboard progress
   checklist help new collectors discover the fill-collection → check-matches → start-a-trade loop -
   see [Onboarding & product-journey guidance](#onboarding--product-journey-guidance) below.
@@ -109,12 +111,26 @@ bootstrap passes.
 - **Trade chat** - each trade request has a private, realtime 1:1 conversation (`trade_messages`),
   visible only to its two participants, with unread badges and auto-scroll.
 - **Notifications** - a bell with a live unread badge, dropdown, and full history page. Notifications
-  fire for new trade requests, accepted/declined trades, and new chat messages.
+  fire for new trade requests, accepted/declined trades, and new chat messages. Clicking any
+  notification always navigates safely - a server-validated redirect route re-checks the target
+  before sending you anywhere, so a deleted/inaccessible trade shows a clear notice on the
+  notifications page instead of a bare 404 - see
+  [Notification navigation](#notification-navigation-safe-redirects-not-generic-404s) below.
+- **Trade history filters** - `/dashboard/trades` has status (all/pending/active/completed/
+  declined-or-cancelled) and direction (all/sent/received) filters over the existing trade list -
+  no new table, no expiry concept, purely a client-side view over data already fetched.
 - **Richer marketplace** - each duplicate (blue) sticker can be listed as *trade only*, *sale only*,
   or *trade or sale*, with an optional price and note. Still no payment processing - the app only
   connects collectors.
 - **Viral sharing** - native share sheet (where supported), a WhatsApp share link, and a "copy
   link" button, using the product's suggested Hebrew invite text.
+- **"What's New" changelog** - a dashboard modal appears once per release the user hasn't seen yet
+  (`profiles.last_seen_changelog_version` vs. `CURRENT_CHANGELOG_VERSION` in `src/lib/changelog.ts`),
+  plus a permanent `/dashboard/changelog` page. See
+  [What's New / changelog](#whats-new--changelog-0018_changelogsql) below.
+- **Collection export** - download your own collection as XLSX, ODS, or CSV from `/dashboard/stickers`,
+  filtered by owned/missing/duplicates/for-sale/for-trade/team. See
+  [Collection export](#collection-export) below.
 
 ## Brand assets
 
@@ -295,9 +311,10 @@ exactly 20 **stickers**, uniquely identified by `TEAMCODE-number` (e.g. `GER-2`,
   which is exactly the "shows IL/BR/FR as text" bug this fixed.
 - `stickers` keeps its original `id` (uuid) primary key (so existing `trade_request_items` foreign
   keys never dangle across the migration) but gained `team_code` (FK to `teams`), a per-team
-  `number` (1-20, no longer globally unique), and a `code` column that's always
-  `${team_code}-${number}` and unique across the whole catalog - the identifier used everywhere in
-  the UI, matching logic, and trade items.
+  `number` (1-20 for every ordinary team, **0-19 for the special `FWC` set** - see
+  `0019_fwc_numbering.sql` below - no longer globally unique), and a `code` column that's always
+  `${team_code}-${number}` (unpadded, e.g. `"GER-2"`, `"FWC-0"`) and unique across the whole catalog -
+  the identifier used everywhere in the UI, matching logic, and trade items.
 - `user_stickers` **replaces both** the old `user_duplicates` and `user_missing` tables with a
   single 4-state row per `(user, sticker)`: **no row** = unmarked (gray), `status = 'have'` (green),
   `'duplicate'` (blue, tradeable - carries `listing_type`/`price`/`note`), or `'missing'` (red).
@@ -472,6 +489,112 @@ this exposes a collector's complete sticker-by-sticker detail) breakdown - overa
 owned/missing/duplicate unique counts and total duplicate copies, a per-team completion grid you can
 click to filter by, and a searchable/sortable/filterable table of every sticker code with its exact
 quantity, available-duplicate count, and status. Never exposed via any user-facing route.
+
+### Notification navigation (safe redirects, not generic 404s)
+
+Every notification click - in the header bell (`NotificationBell.tsx`) and the full history page
+(`NotificationHistoryList.tsx`) - now goes through one shared behavior
+(`NotificationsContext.tsx`'s `openNotification()`): it navigates immediately to
+`/dashboard/notifications/go/[id]` and separately (never blocking on it) attempts to mark the
+notification read, so a slow or failed mark-as-read call can never delay or prevent navigation.
+
+`/dashboard/notifications/go/[id]/route.ts` is the actual authority on where a click ends up. It
+loads the notification through the caller's own RLS-scoped session (never a service role), confirms
+the row actually belongs to the caller (defense in depth beyond RLS - relevant for an admin, who can
+read broader `notifications` rows via RLS but should never be redirected into a trade that isn't
+theirs), marks it read best-effort, and validates the stored `link` via
+`resolveNotificationTarget()`: the link must match a whitelisted shape (currently: a trade detail
+page, which is also where trade chat lives, so chat notifications keep opening the right page), the
+referenced trade must still exist, and the caller must still be one of its two participants. A
+null, malformed, unsupported, or unsafe link, a deleted trade, or a trade the caller is no longer
+part of all redirect to `/dashboard/notifications?unavailable=1` - never a generic 404 - which shows
+a clear "this notification's target is no longer available" notice instead.
+
+### What's New / changelog (`0018_changelog.sql`)
+
+A `profiles.last_seen_changelog_version` (nullable text) column tracks which release each user has
+last dismissed the "What's New" modal for - deliberately a *version string*, not a boolean "seen"
+flag, so a future release naturally reopens the modal for everyone again with no "never show updates
+again" concept possible. Changelog content lives in code
+(`src/lib/changelog.ts`'s `CHANGELOG` array, newest entry first) rather than a database-backed CMS -
+entries ship in the same commit as the feature(s) they describe.
+`CURRENT_CHANGELOG_VERSION` is always derived from `CHANGELOG[0]`, never hand-duplicated.
+`shouldShowChangelogModal(lastSeenVersion)` is the one rule (`lastSeenVersion !== CURRENT_CHANGELOG_VERSION`)
+that decides whether the dashboard shows `ChangelogModal` (only once onboarding is already complete,
+so a brand-new user never sees two modals stacked) - dismissing it calls
+`dismissChangelogAction()`, which sets that column to the current version for the caller only.
+A permanent `/dashboard/changelog` page lists every past entry, linked from both the modal and a
+small "🆕 מה חדש" nav item.
+
+### Collection export
+
+Any logged-in user can export their own collection as XLSX, ODS, or CSV from a dropdown on
+`/dashboard/stickers` (`ExportCollectionPanel.tsx`), filtered to the full collection, owned, missing,
+duplicates, for-sale, for-trade, or a single team. No new database migration - it reuses the same
+row-shaping logic the admin per-collector detail page already had:
+`buildCollectionBreakdown()` (extracted from `getAdminUserCollectionDetail()` in `data/admin.ts`,
+which is now a thin `requireAdmin()`-then-delegate wrapper around it) is shared by the new,
+user-scoped `getMyCollectionForExport()` in `data/collectionExport.ts` - which only ever reads the
+caller's *own* `auth.getUser().id`, never accepting a target user id, so there is no code path that
+could return another user's collection. The actual file bytes are built by
+`buildCollectionExportFile()` using [`@e965/xlsx`](https://www.npmjs.com/package/@e965/xlsx) - a
+maintained npm mirror of SheetJS's own CDN releases, chosen over the last npm-published `xlsx`
+package (0.18.5, from 2023, with an unpatched high-severity prototype-pollution/ReDoS advisory) which
+only affects workflows that *parse* untrusted files - this app only ever *writes* files from its own
+data, but there was no reason to ship a flagged dependency when a maintained one exists. CSV output
+gets a UTF-8 BOM so Hebrew text renders correctly when opened in Excel. The download itself is served
+by an authenticated route handler (`/api/collection-export`) with a safe filename built only from a
+fixed prefix, the (enum) filter, and today's date - never from any user-controlled text.
+
+### FWC's special sticker numbering (`0019_fwc_numbering.sql`)
+
+`FWC` is a bonus "FIFA World Cup" sticker set added by the site administrator through **Admin area
+→ Sticker Catalog** (`admin_add_team()`) - a real team/category in `public.teams` just like any of
+the 48 official ones, not a new feature. Its only real difference from every ordinary team is its
+in-team numbering: **0-19** instead of the ordinary **1-20**, still 20 stickers total (so completion
+percentages, "×N" progress totals, etc. are unaffected either way).
+
+Because FWC was created through the *existing* (pre-this-migration) `admin_add_team()`, which had no
+special case for any team code, its stickers already existed in production numbered `FWC-1`..`FWC-20`
+- the same 1-20 range as every other team, unpadded (`"FWC-1"`, never `"FWC-01"`), matching this
+project's one and only sticker-code convention. `0019_fwc_numbering.sql`:
+
+1. **Renumbers existing FWC rows down by one** (`FWC-1..FWC-20` -> `FWC-0..FWC-19`) **in place** -
+   only `number`/`code` change; `id` (and therefore every existing `user_stickers` and
+   `trade_request_items` row referencing it) is untouched, so no collection or trade data is lost or
+   needs remapping. Guarded by `exists (... where team_code = 'FWC' and number = 20)`, so this shift
+   runs at most once: a fresh database with no FWC team yet, or a database where FWC has already been
+   renumbered, is a safe no-op on every subsequent run.
+2. **Installs a permanent, team-specific `CHECK` constraint**: `(team_code = 'FWC' and number between
+   0 and 19) or (team_code <> 'FWC' and number between 1 and 20)` - replacing the previous flat
+   `number between 1 and 20` that applied to every team including FWC.
+3. **Redefines `admin_add_team()`** so any *future* FWC creation (e.g. rebuilding the catalog from
+   scratch) generates `0..19` directly via `generate_series(v_start, v_end)`, instead of relying on
+   this migration's one-time renumbering step. Every ordinary team is completely unaffected - still
+   `generate_series(1, 20)`.
+
+**Application code** (`src/lib/stickerCodes.ts`) is team-aware for the same reason: `isValidStickerCode()`/
+`normalizeStickerCode()` accept `FWC-0`..`FWC-19` (rejecting `FWC-20`) but only `1-20` for every other
+team code (rejecting e.g. `GER-0`/`GER-21`) - `isValidStickerNumberForTeam()` is the single shared rule,
+also used by `OpenAiVisionProvider`'s own OCR-result validation so the two can never drift apart.
+Matching, trades, search, and collection display all key off `sticker_id`/`code` and are otherwise
+completely code-format-agnostic, so they needed no change at all to work correctly with FWC.
+
+**Sorting is numeric, not lexicographic**: a plain string comparison of codes (`"FWC-10" <
+"FWC-2"` alphabetically) previously affected every team with 10+ stickers, not just FWC - fixed in
+the few places that sorted by the `code` string directly (`collectionBreakdown.ts` - shared by the
+admin detail page and the collection export - `getUserDuplicateListings()`, and
+`AdminUserCollectionPanel.tsx`) to sort by team code then the *numeric* in-team number instead.
+
+**Verified by hand** against a simulated drifted/legacy database (an FWC team created via the
+pre-migration `admin_add_team()`, with `user_stickers` and `trade_request_items` rows referencing
+`FWC-1`, `FWC-5`, and `FWC-20`): after migrating, all three sticker `id`s were unchanged, their
+`code`/`number` correctly became `FWC-0`/`FWC-4`/`FWC-19`, and every referencing row still joined
+correctly to the same sticker with its new code - confirming no collection or trade data was lost.
+Re-running the migration a second time was confirmed idempotent (FWC's range stayed `0-19`, no error).
+The full migration chain (`0001`-`0019`) plus `seed.sql` was also confirmed to apply cleanly on a
+fresh database, and a brand-new FWC team created *after* this migration correctly gets `0-19` directly
+from the very first insert.
 
 ### Why a `profiles` / `profile_contacts` split?
 
@@ -1217,8 +1340,10 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 15. `supabase/migrations/0015_scanner_reliability.sql`
 16. `supabase/migrations/0016_support_reports.sql`
 17. `supabase/migrations/0017_quantity_and_groups.sql`
+18. `supabase/migrations/0018_changelog.sql`
+19. `supabase/migrations/0019_fwc_numbering.sql`
 
-All 17 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 19 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
 inserts/updates are required, including for your first admin account (see step 4) or the sticker
