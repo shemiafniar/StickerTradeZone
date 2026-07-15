@@ -113,7 +113,11 @@ export async function buildCollectionBreakdown(
         price: owned?.price ?? null,
       };
     })
-    .sort((a, b) => a.code.localeCompare(b.code));
+    // Sorted by the actual numeric team+number, not the code *string* -
+    // "FWC-10" must sort after "FWC-9", not between "FWC-1" and "FWC-2" the
+    // way a plain string comparison would place it. This matters for every
+    // team once it has any double-digit sticker number, not just FWC.
+    .sort((a, b) => a.teamCode.localeCompare(b.teamCode) || a.number - b.number);
 
   // Only rows that actually exist (quantity !== null) feed the aggregate
   // counts - identical in spirit to getCollectionCounts()'s

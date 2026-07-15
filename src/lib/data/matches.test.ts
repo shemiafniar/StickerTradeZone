@@ -23,7 +23,14 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("@/lib/data/stickers", () => ({
-  getStickerIdToCodeMap: vi.fn(async () => new Map([["s-need", "FRA-1"], ["s-mine", "GER-1"]])),
+  getStickerIdToCodeMap: vi.fn(
+    async () =>
+      new Map([
+        ["s-need", "FRA-1"],
+        ["s-mine", "GER-1"],
+        ["s-fwc", "FWC-0"],
+      ])
+  ),
 }));
 
 import { getMatchesForCurrentUser } from "@/lib/data/matches";
@@ -88,6 +95,16 @@ describe("getMatchesForCurrentUser - quantity-aware duplicate/missing detection"
     expect(matches).toHaveLength(1);
     expect(matches[0].theyHaveThatINeed).toEqual(["FRA-1"]);
     expect(matches[0].theyNeedThatIHave).toEqual([]);
+  });
+
+  it("matching works with FWC sticker codes (numbered 0-19) exactly like any other team - matching is sticker_id/quantity-based and code-agnostic", async () => {
+    setupTables([
+      { user_id: "other", sticker_id: "s-fwc", quantity: 2 }, // other has 1 available FWC-0 duplicate
+      { user_id: "me", sticker_id: "s-fwc", quantity: 0 }, // I'm missing FWC-0
+    ]);
+    const { matches } = await getMatchesForCurrentUser();
+    expect(matches).toHaveLength(1);
+    expect(matches[0].theyHaveThatINeed).toEqual(["FWC-0"]);
   });
 
   it("reports hasCollectionData = false when the user has no missing/duplicate rows at all", async () => {

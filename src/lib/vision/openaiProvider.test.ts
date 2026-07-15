@@ -66,6 +66,31 @@ describe("OpenAiVisionProvider", () => {
     expect(result.detected).toEqual([{ teamCode: "GER", number: 2, confidence: 0.8 }]);
   });
 
+  it("accepts FWC's special 0-19 numbering range (e.g. FWC-0) while still rejecting FWC-20", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () =>
+        openAiResponse(
+          JSON.stringify({
+            detected: [
+              { teamCode: "FWC", number: 0, confidence: 0.9 },
+              { teamCode: "FWC", number: 19, confidence: 0.9 },
+              { teamCode: "FWC", number: 20, confidence: 0.9 },
+              { teamCode: "GER", number: 0, confidence: 0.9 },
+            ],
+          })
+        ),
+    }) as unknown as typeof fetch;
+
+    const provider = new OpenAiVisionProvider();
+    const result = await provider.scanStickerBacks("base64data", "image/jpeg");
+
+    expect(result.detected).toEqual([
+      { teamCode: "FWC", number: 0, confidence: 0.9 },
+      { teamCode: "FWC", number: 19, confidence: 0.9 },
+    ]);
+  });
+
   it("returns an empty detected list (not an error) when the model reports no stickers", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

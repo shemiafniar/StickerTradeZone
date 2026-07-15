@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getTeams, getTeamByCode, getStickersForTeam } from "@/lib/data/teams";
 import { getStickerCatalog, getStickerIdToCodeMap } from "@/lib/data/stickers";
 import { availableDuplicates, summarizeQuantities, type CollectionCounts } from "@/lib/collectionStatus";
+import { compareStickerCodes } from "@/lib/stickerCodes";
 import type { ListingType, Team, UserSticker } from "@/types/database";
 
 export interface TeamProgress extends Team {
@@ -134,5 +135,5 @@ export async function getUserDuplicateListings(userId: string): Promise<Duplicat
       price: d.price,
       note: d.note,
     }))
-    .sort((a, b) => a.code.localeCompare(b.code));
+    .sort((a, b) => compareStickerCodes(a.code, b.code));
 }
