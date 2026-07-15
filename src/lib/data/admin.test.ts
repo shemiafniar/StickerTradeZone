@@ -4,7 +4,8 @@ import { summarizeQuantities } from "@/lib/collectionStatus";
 const { mockFrom, mockRpc, mockGetUser, tableMocks, chainableRange } = vi.hoisted(() => {
   const tableMocks = new Map<string, unknown>();
   return {
-    mockRpc: vi.fn(async () => ({ data: [] })),
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    mockRpc: vi.fn(async (..._args: unknown[]) => ({ data: [] })),
     mockGetUser: vi.fn(),
     mockFrom: vi.fn((table: string) => {
       const impl = tableMocks.get(table);
@@ -444,7 +445,8 @@ describe("Collector, admin list, and admin detail agree for every user (multi-us
 
   it("getAdminUsers() matches summarizeQuantities() on each user's own raw rows, for every user regardless of role or collection size", async () => {
     setupSharedTables();
-    mockRpc.mockImplementation(async (name: string) => {
+    mockRpc.mockImplementation(async (...args: unknown[]) => {
+      const name = args[0];
       if (name === "admin_get_user_emails") return { data: [] };
       return { data: [] };
     });
