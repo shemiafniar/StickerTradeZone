@@ -4,6 +4,7 @@ import { getTeamsWithProgress } from "@/lib/data/collection";
 import { getAppSettings } from "@/lib/data/stickers";
 import { TeamCard } from "@/components/collection/TeamCard";
 import { Card } from "@/components/ui/Card";
+import { ExportCollectionPanel } from "@/components/collection/ExportCollectionPanel";
 
 export const metadata = { title: "האוסף שלי" };
 
@@ -34,6 +35,7 @@ export default async function StickersPage() {
           >
             🔁 הכפולים שלי ({totalDuplicateCopies})
           </Link>
+          <ExportCollectionPanel teams={teams.map((t) => ({ code: t.code, name_he: t.name_he }))} />
           <Link
             href="/dashboard/scanner"
             className="rounded-xl bg-brand px-4 py-2 text-sm font-bold text-white transition hover:bg-brand-dark"
