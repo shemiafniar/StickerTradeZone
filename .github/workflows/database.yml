@@ -68,6 +68,24 @@ jobs:
       - name: Apply seed.sql (dev-only data - sanity check that it still matches the schema)
         run: psql -v ON_ERROR_STOP=1 -f supabase/seed.sql
 
+      # 0020_fix_existing_fwc_numbering.sql shipped specifically because
+      # 0019's *effect* silently never reached production even though the
+      # file itself merged (see 0020's own header comment) - this step is
+      # the durable regression guard against that ever happening
+      # unnoticed again: it creates its own throwaway database against
+      # this same Postgres service, deliberately reproducing the exact
+      # confirmed-production state (every migration applied except 0019),
+      # and asserts 0020 alone still fixes it - same ids, same linked
+      # rows, correct 0-19 numbering. See
+      # supabase/migrations/0020_fix_existing_fwc_numbering.dbtest.test.ts.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify 0020_fix_existing_fwc_numbering.sql against a live database
+        run: npm run test -- 0020_fix_existing_fwc_numbering
+
   deploy-migrations:
     name: Deploy migrations to production
     runs-on: ubuntu-latest

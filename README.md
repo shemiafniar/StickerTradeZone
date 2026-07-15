@@ -596,6 +596,56 @@ The full migration chain (`0001`-`0019`) plus `seed.sql` was also confirmed to a
 fresh database, and a brand-new FWC team created *after* this migration correctly gets `0-19` directly
 from the very first insert.
 
+#### Follow-up: `0019`'s effect never actually reached production (`0020_fix_existing_fwc_numbering.sql`)
+
+Despite all of the above, a production query confirmed FWC's stickers were still numbered `1`-`20`
+after `0019` had merged to `main`. The root cause was **not** a bug in `0019`'s SQL (which was
+re-verified against the exact reported state below) - it's that `deploy-migrations` (this repo's
+`push`-to-`main` auto-deploy job) has failed on every single merge since it was introduced, always at
+the `supabase link` step with `"Access token not provided"` - i.e. `SUPABASE_ACCESS_TOKEN`/
+`SUPABASE_PROJECT_ID` were never actually available to that job (check `gh run list
+--workflow=database.yml` to confirm the current state; **this affects every migration merged since
+then, not only `0019`** - `0018_changelog.sql`'s `profiles.last_seen_changelog_version` column may
+also not exist in production yet). One plausible contributing factor: this repo has a GitHub
+Environment named **`Production`** (capital P), while the workflow's `deploy-migrations` job requests
+`environment: production` (lowercase) - if that name has to match exactly, the job would never pick up
+secrets scoped to that environment at all. **Action required**: confirm in **Settings → Environments**
+that the environment name and the secrets (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`,
+`SUPABASE_DB_PASSWORD`) actually exist and match what the workflow references, then re-run the failed
+`deploy-migrations` job (or push a no-op commit) - until that's fixed, **every future migration will
+have the same silent gap**, not just this one.
+
+Per explicit instruction, `0019` itself was left untouched rather than edited (it may already be
+recorded as "applied" in this project's own migration-tracking table even though its effect never
+reached the database - editing an already-tracked file is exactly the kind of drift the
+`deploy-migrations` pipeline exists to prevent). `0020_fix_existing_fwc_numbering.sql` is a new,
+fully independent, idempotent migration that reaches the correct end state regardless of whether
+`0019` ever partially ran - functionally the same renumbering, constraint, and `admin_add_team()`
+redefinition as `0019`, just re-stated so it's safe to apply on top of whatever `0019`'s actual (as
+opposed to intended) effect on production turns out to be.
+
+**Verified against the exact reported production state**: a throwaway database was migrated through
+every file *except* `0019` and `0020` (i.e. `0018` applied, `0019` not - the confirmed real state),
+FWC was created through that state's `admin_add_team()` (1-20, no special case), and `user_stickers`/
+`trade_request_items` rows were attached to `FWC-1`, `FWC-10`, and `FWC-20`. Running `0020` alone
+against that exact state: all 20 sticker `id`s were unchanged; the row that was `FWC-1` is now
+`FWC-0` with its `user_stickers` link still attached by that same `id`; the row that was `FWC-20` is
+now `FWC-19`, likewise still linked; the row that was `FWC-10` is now `FWC-9`, and its
+`trade_request_items` link is still attached; `GER` (and every other ordinary team) stayed at exactly
+`1`-`20`; the new CHECK constraint correctly rejects both `FWC-20` and `GER-21`; re-running `0020` a
+second time is a no-op; and a brand-new custom team created after `0020` still gets the ordinary
+`1`-`20` range. This exact scenario is now also an automated live-database test (see
+`supabase/migrations/0020_fix_existing_fwc_numbering.dbtest.test.ts`), run against a real Postgres
+instance both locally and in `database.yml`'s CI job, so this specific regression - a migration that's
+correct in the repo but never verified against the *actual* production shape - can't silently recur.
+
+**The exact manual verification query** (case-insensitive, matching how this bug was originally
+confirmed) should return `0` through `19` after `0020` is actually applied to production:
+
+```sql
+select id, team_code, number, code from stickers where upper(team_code) = 'FWC' order by number;
+```
+
 ### Why a `profiles` / `profile_contacts` split?
 
 Postgres RLS is row-level, not column-level. To guarantee phone numbers are *only* ever readable by
@@ -1342,8 +1392,9 @@ In the Supabase SQL Editor (or via `supabase db push` / `psql` locally):
 17. `supabase/migrations/0017_quantity_and_groups.sql`
 18. `supabase/migrations/0018_changelog.sql`
 19. `supabase/migrations/0019_fwc_numbering.sql`
+20. `supabase/migrations/0020_fix_existing_fwc_numbering.sql`
 
-All 19 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
+All 20 files were validated end-to-end (schema + RLS + triggers + seed) against a real Postgres
 instance from a completely empty database, both individually and as a full clean run - see the PR
 description for details. **This is the only SQL you should ever need to run** - no follow-up manual
 inserts/updates are required, including for your first admin account (see step 4) or the sticker
